@@ -170,6 +170,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val tab = activeTab.value
             (tab?.url ?: "") to (tab?.title ?: "")
         }
+        jarvisVoiceEngine.apiKeyProvider = {
+            settings.value.customGeminiApiKey
+        }
         jarvisVoiceEngine.onExecuteAction = { action: JarvisAction ->
             executeJarvisAction(action)
         }

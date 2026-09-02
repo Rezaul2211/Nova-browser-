@@ -24,7 +24,7 @@ class GeminiAiService : AiService {
         .build()
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-    private val MODEL_NAME = "gemini-3.5-flash"
+    private val MODEL_NAME = "gemini-1.5-flash"
 
     override suspend fun generateContent(
         prompt: String,

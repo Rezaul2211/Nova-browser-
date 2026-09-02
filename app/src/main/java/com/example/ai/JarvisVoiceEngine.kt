@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 
 sealed interface JarvisAction {
     data class Navigate(val url: String, val label: String) : JarvisAction
@@ -323,6 +325,9 @@ class JarvisVoiceEngine(
 
     var onExecuteAction: ((JarvisAction) -> Unit)? = null
     var getPageContext: (() -> Pair<String, String>)? = null // Pair<currentUrl, currentTitle>
+    var apiKeyProvider: (() -> String)? = null
+
+    private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
     fun processVoiceCommand(input: String) {
         val query = input.trim()
@@ -331,8 +336,19 @@ class JarvisVoiceEngine(
         _uiState.value = _uiState.value.copy(
             recognizedSpeech = query,
             status = JarvisVoiceStatus.PROCESSING,
-            activeActionLabel = "Thinking..."
+            activeActionLabel = if (_uiState.value.preferredLanguage.startsWith("bn")) "বিশ্লেষণ করা হচ্ছে..." else "Thinking..."
         )
+
+        // Instant local fast-path for direct hardware/browser physical actions (e.g. scroll, navigate, reload)
+        val instantAction = checkImmediateLocalAction(query)
+        if (instantAction != null) {
+            val (action, reply) = instantAction
+            conversationHistory.add("User: $query")
+            conversationHistory.add("Jarvis: $reply")
+            if (conversationHistory.size > 8) conversationHistory.removeAt(0)
+            executeJarvisAction(action, reply, query)
+            return
+        }
 
         // Store short rolling conversation history
         conversationHistory.add("User: $query")
@@ -341,44 +357,48 @@ class JarvisVoiceEngine(
         // FULL DYNAMIC GEMINI LIVE AI AUTOMATION & CONVERSATION
         scope.launch {
             val (currentUrl, currentTitle) = getPageContext?.invoke() ?: ("" to "")
-            val historyContext = conversationHistory.takeLast(4).joinToString("\n")
+            val historyContext = conversationHistory.takeLast(6).joinToString("\n")
+            val customKey = apiKeyProvider?.invoke()?.takeIf { it.isNotBlank() }
 
             val systemInstruction = """
-                You are AUREN JARVIS, a hyper-intelligent, friendly, and natural voice AI assistant like Google Gemini Live, integrated directly inside Auren AI Browser.
-                You can converse naturally, answer ANY question, tell stories, explain complex topics, research facts, AND seamlessly automate the browser for the user.
+                You are AUREN JARVIS, a hyper-intelligent, human-like voice AI assistant integrated directly inside Auren AI Browser.
+                You can converse naturally like Google Gemini Live, answer ANY question, explain topics, provide facts, chat warmly, AND seamlessly automate the browser.
                 
-                The user can speak in Bengali (বাংলা), English, or mixed language.
-                ALWAYS respond verbally in the same language the user spoke (Bangla or English).
-                Keep your spoken voice response concise (1-2 sentences for browser actions, or natural conversational answers for general questions), warm, pleasant, and intelligent.
+                The user speaks in Bengali (বাংলা) or English.
+                ALWAYS respond verbally in the exact same language the user spoke (Bangla or English).
+                Keep spoken responses natural, expressive, friendly, and concise (1-2 sentences for browser actions, or direct informative voice answers for general questions).
                 
-                Current Browser State:
+                Current Webpage:
                 - URL: $currentUrl
                 - Title: $currentTitle
                 
                 Recent Conversation:
                 $historyContext
                 
-                You must decide whether the user wants to:
-                1. Navigate to a site: action = "NAVIGATE", target = "https://..."
-                2. Search for something: action = "SEARCH", target = "<search query>"
-                3. Scroll the webpage: action = "SCROLL_DOWN" | "SCROLL_UP" | "SCROLL_TOP" | "SCROLL_BOTTOM"
-                4. Click on a visible element or link: action = "CLICK", target = "<button or link text>"
-                5. Tab management: action = "NEW_TAB" | "CLOSE_TAB" | "RELOAD" | "BACK" | "FORWARD"
-                6. Summarize page: action = "SUMMARIZE"
-                7. Translate page: action = "TRANSLATE", target = "Bengali"
-                8. Conversational / Question Answering / Chit-Chat: action = "SPEAK", target = ""
+                ACTION DECISION RULES:
+                1. Scroll page: If user wants to scroll or move the page up/down (e.g. "scroll", "স্ক্রোল", "স্কুল", "নিচে যাও", "উপরে ওঠাও"):
+                   action = "SCROLL_DOWN" | "SCROLL_UP" | "SCROLL_TOP" | "SCROLL_BOTTOM", target = ""
+                2. Navigate: If user mentions opening a website or going to a service (e.g. "ইউটিউব ওপেন করো", "youtube", "facebook", "wikipedia.org"):
+                   action = "NAVIGATE", target = "https://<valid_domain>"
+                3. Search: ONLY if the user specifically requests to search the web (e.g. "সার্চ করো X", "search for X", "look up X on google"):
+                   action = "SEARCH", target = "<query>"
+                4. Browser tabs: "NEW_TAB" | "CLOSE_TAB" | "RELOAD" | "BACK" | "FORWARD"
+                5. Page reading: "SUMMARIZE" | "TRANSLATE" (target: "Bengali")
+                6. Conversational / Questions / Chit-chat / Advice: If user asks ANY question, greeting, joke, calculation, knowledge query, or statement:
+                   action = "SPEAK", target = "", voice_response = "<Human-like, friendly, helpful spoken answer in Bangla or English>"
                 
-                Output strictly a valid JSON object with NO markdown formatting around it:
+                You MUST return strictly a valid JSON object without markdown fences:
                 {
-                   "action": "NAVIGATE" | "SEARCH" | "SCROLL_DOWN" | "SCROLL_UP" | "SCROLL_TOP" | "SCROLL_BOTTOM" | "CLICK" | "NEW_TAB" | "CLOSE_TAB" | "RELOAD" | "BACK" | "FORWARD" | "SUMMARIZE" | "TRANSLATE" | "SPEAK",
-                   "target": "<URL or query or element text or target lang or empty>",
-                   "voice_response": "<Natural conversational Bengali or English voice speech to speak aloud>"
+                   "action": "SCROLL_DOWN"|"SCROLL_UP"|"SCROLL_TOP"|"SCROLL_BOTTOM"|"NAVIGATE"|"SEARCH"|"NEW_TAB"|"CLOSE_TAB"|"RELOAD"|"BACK"|"FORWARD"|"SUMMARIZE"|"TRANSLATE"|"SPEAK",
+                   "target": "<target url or param or empty>",
+                   "voice_response": "<Natural conversational Bengali or English voice speech to be spoken aloud>"
                 }
             """.trimIndent()
 
             val aiService = GeminiAiService()
             val result = aiService.generateContent(
                 prompt = "User said: \"$query\"",
+                customApiKey = customKey,
                 systemInstruction = systemInstruction
             )
 
@@ -399,6 +419,68 @@ class JarvisVoiceEngine(
         }
     }
 
+    private fun checkImmediateLocalAction(raw: String): Pair<JarvisAction, String>? {
+        val text = raw.lowercase().trim()
+        val isBn = containsBengali(raw)
+
+        // 1. Scrolling detection (handles Bengali speech-to-text variations like 'স্কুল', 'স্ক্রোল', 'স্ক্রল', 'নামাও', 'তোলো')
+        if (text.contains("scroll down") || text.contains("স্ক্রোল ডাউন") || text.contains("স্ক্রল ডাউন") ||
+            text.contains("নিচে যাও") || text.contains("নিচে নামাও") || text.contains("নিচে নামো") ||
+            text.contains("স্কুল কর") || text.contains("স্ক্রল কর") || text.contains("স্ক্রোল কর") ||
+            text.contains("আর একটু নিচে") || text.contains("scroll") && text.contains("down")) {
+            return JarvisAction.Scroll("down") to if (isBn) "নিচে স্ক্রোল করা হচ্ছে" else "Scrolling down"
+        }
+
+        if (text.contains("scroll up") || text.contains("স্ক্রোল আপ") || text.contains("স্ক্রল আপ") ||
+            text.contains("উপরে যাও") || text.contains("উপরে তোলো") || text.contains("উপরে ওঠাও") ||
+            text.contains("scroll") && text.contains("up")) {
+            return JarvisAction.Scroll("up") to if (isBn) "উপরে স্ক্রোল করা হচ্ছে" else "Scrolling up"
+        }
+
+        if (text.contains("scroll top") || text.contains("একদম উপরে") || text.contains("শুরুতে যাও")) {
+            return JarvisAction.Scroll("top") to if (isBn) "পৃষ্ঠার শুরুতে নেওয়া হলো" else "Scrolling to top"
+        }
+
+        if (text.contains("scroll bottom") || text.contains("একদম নিচে") || text.contains("শেষে যাও")) {
+            return JarvisAction.Scroll("bottom") to if (isBn) "পৃষ্ঠার শেষে নেওয়া হলো" else "Scrolling to bottom"
+        }
+
+        // 2. Navigation quick actions
+        if (text.startsWith("open ") || text.startsWith("go to ") || text.contains("ওপেন করো") || text.contains("খুলো") || text.contains("যাও")) {
+            if (text.contains("youtube") || text.contains("ইউটিউব")) {
+                return JarvisAction.Navigate("https://www.youtube.com", "YouTube") to if (isBn) "YouTube ওপেন করা হচ্ছে" else "Opening YouTube"
+            }
+            if (text.contains("facebook") || text.contains("ফেসবুক")) {
+                return JarvisAction.Navigate("https://www.facebook.com", "Facebook") to if (isBn) "Facebook ওপেন করা হচ্ছে" else "Opening Facebook"
+            }
+            if (text.contains("google") || text.contains("গুগল")) {
+                return JarvisAction.Navigate("https://www.google.com", "Google") to if (isBn) "Google ওপেন করা হচ্ছে" else "Opening Google"
+            }
+            if (text.contains("wikipedia") || text.contains("উইকিপিডিয়া")) {
+                return JarvisAction.Navigate("https://www.wikipedia.org", "Wikipedia") to if (isBn) "Wikipedia ওপেন করা হচ্ছে" else "Opening Wikipedia"
+            }
+        }
+
+        // 3. Tab and Page Control
+        if (text.contains("reload") || text.contains("refresh") || text.contains("রিফ্রেশ") || text.contains("রিলোড")) {
+            return JarvisAction.RefreshPage to if (isBn) "পেজটি রিফ্রেশ করা হচ্ছে" else "Refreshing page"
+        }
+        if (text == "back" || text == "go back" || text.contains("পিছনে যাও") || text.contains("আগের পেজে যাও")) {
+            return JarvisAction.GoBack to if (isBn) "পূর্ববর্তী পেজে ফিরে যাওয়া হলো" else "Going back"
+        }
+        if (text == "forward" || text == "go forward" || text.contains("সামনে যাও") || text.contains("পরের পেজে যাও")) {
+            return JarvisAction.GoForward to if (isBn) "পরবর্তী পেজে যাওয়া হলো" else "Going forward"
+        }
+        if (text.contains("close tab") || text.contains("ট্যাব বন্ধ") || text.contains("কেটে দাও")) {
+            return JarvisAction.CloseTab to if (isBn) "ট্যাবটি বন্ধ করা হলো" else "Closing tab"
+        }
+        if (text.contains("new tab") || text.contains("নতুন ট্যাব")) {
+            return JarvisAction.NewTab() to if (isBn) "নতুন ট্যাব খোলা হলো" else "Opening new tab"
+        }
+
+        return null
+    }
+
     private fun executeJarvisAction(action: JarvisAction, voiceReply: String, originalCommand: String) {
         _uiState.value = _uiState.value.copy(
             status = JarvisVoiceStatus.EXECUTING,
@@ -413,13 +495,33 @@ class JarvisVoiceEngine(
     private fun parseAiJarvisResponse(jsonText: String, originalCommand: String): Pair<JarvisAction, String> {
         return try {
             val clean = jsonText.replace("```json", "").replace("```", "").trim()
-            val actionType = clean.substringAfter("\"action\":").substringBefore(",").replace("\"", "").trim()
-            val target = clean.substringAfter("\"target\":").substringBefore(",").replace("\"", "").trim()
-            val voiceReply = clean.substringAfter("\"voice_response\":").substringBefore("}").replace("\"", "").trim()
+            var actionType = ""
+            var target = ""
+            var voiceReply = ""
 
-            val effectiveReply = if (voiceReply.isNotBlank()) voiceReply else "Done."
+            try {
+                val mapAdapter = moshi.adapter(Map::class.java)
+                val map = mapAdapter.fromJson(clean) as? Map<*, *>
+                if (map != null) {
+                    actionType = (map["action"] as? String) ?: ""
+                    target = (map["target"] as? String) ?: ""
+                    voiceReply = (map["voice_response"] as? String) ?: (map["voiceResponse"] as? String) ?: (map["response"] as? String) ?: ""
+                }
+            } catch (e: Exception) {
+                // Regex fallback for malformed JSON
+                val actionMatch = Regex(""""action"\s*:\s*"([^"]+)"""").find(clean)
+                actionType = actionMatch?.groupValues?.get(1) ?: ""
 
-            val action: JarvisAction = when (actionType.uppercase()) {
+                val targetMatch = Regex(""""target"\s*:\s*"([^"]*)"""").find(clean)
+                target = targetMatch?.groupValues?.get(1) ?: ""
+
+                val voiceMatch = Regex(""""voice_response"\s*:\s*"([^"]+)"""").find(clean)
+                voiceReply = voiceMatch?.groupValues?.get(1) ?: ""
+            }
+
+            val effectiveReply = if (voiceReply.isNotBlank()) voiceReply else if (containsBengali(originalCommand)) "সম্পন্ন করা হলো" else "Done."
+
+            val action: JarvisAction = when (actionType.uppercase().trim()) {
                 "NAVIGATE" -> {
                     val url = if (target.startsWith("http://") || target.startsWith("https://")) target else "https://$target"
                     JarvisAction.Navigate(url, target)
@@ -437,7 +539,12 @@ class JarvisVoiceEngine(
                 "FORWARD" -> JarvisAction.GoForward
                 "SUMMARIZE" -> JarvisAction.SummarizePage
                 "TRANSLATE" -> JarvisAction.TranslatePage(if (target.isNotBlank()) target else "Bengali")
-                else -> JarvisAction.SpeakOnly(effectiveReply)
+                "SPEAK" -> JarvisAction.SpeakOnly(effectiveReply)
+                else -> {
+                    // If the response is pure conversational text
+                    if (voiceReply.isNotBlank()) JarvisAction.SpeakOnly(voiceReply)
+                    else parseLocalFallback(originalCommand).first
+                }
             }
             action to effectiveReply
         } catch (e: Exception) {
@@ -449,30 +556,31 @@ class JarvisVoiceEngine(
         val text = raw.lowercase().trim()
         val isBn = containsBengali(raw)
 
-        if (text.contains("scroll down") || text.contains("নিচে যাও") || text.contains("নিচে স্ক্রোল")) {
-            return JarvisAction.Scroll("down") to if (isBn) "নিচে স্ক্রোল করা হলো" else "Scrolling down"
+        // Check immediate browser actions
+        val instant = checkImmediateLocalAction(raw)
+        if (instant != null) return instant
+
+        // Conversational greetings & general chit-chat (Speak instead of Search!)
+        if (text.contains("কেমন আছো") || text.contains("how are you")) {
+            return JarvisAction.SpeakOnly(if (isBn) "আমি ভালো আছি! আপনাকে কীভাবে সাহায্য করতে পারি?" else "I am doing great! How can I assist you today?") to if (isBn) "আমি ভালো আছি! আপনাকে কীভাবে সাহায্য করতে পারি?" else "I am doing great! How can I assist you today?"
         }
-        if (text.contains("scroll up") || text.contains("উপরে যাও") || text.contains("উপরে স্ক্রোল")) {
-            return JarvisAction.Scroll("up") to if (isBn) "উপরে স্ক্রোল করা হলো" else "Scrolling up"
+        if (text.contains("তুমি কে") || text.contains("তোমার নাম কি") || text.contains("who are you") || text.contains("what is your name")) {
+            return JarvisAction.SpeakOnly(if (isBn) "আমি অরেন ব্রাউজারের ভয়েস এআই অ্যাসিস্ট্যান্ট। আমি আপনার নির্দেশে ব্রাউজিং ও যেকোনো প্রশ্নের উত্তর দিতে পারি।" else "I am Auren Browser Voice AI Assistant, ready to help you browse and answer questions.") to if (isBn) "আমি অরেন ব্রাউজারের ভয়েস এআই অ্যাসিস্ট্যান্ট।" else "I am Auren Browser Voice AI Assistant."
         }
-        if (text.contains("youtube") || text.contains("ইউটিউব")) {
-            return JarvisAction.Navigate("https://www.youtube.com", "YouTube") to if (isBn) "YouTube ওপেন করা হচ্ছে" else "Opening YouTube"
-        }
-        if (text.contains("google") || text.contains("গুগল")) {
-            return JarvisAction.Navigate("https://www.google.com", "Google") to if (isBn) "Google ওপেন করা হচ্ছে" else "Opening Google"
-        }
-        if (text.contains("facebook") || text.contains("ফেসবুক")) {
-            return JarvisAction.Navigate("https://www.facebook.com", "Facebook") to if (isBn) "Facebook ওপেন করা হচ্ছে" else "Opening Facebook"
-        }
-        if (text.contains("summarize") || text.contains("সামারি") || text.contains("সারসংক্ষেপ")) {
-            return JarvisAction.SummarizePage to if (isBn) "পেজের সারসংক্ষেপ তৈরি করা হচ্ছে" else "Summarizing page"
-        }
-        if (text.contains("translate") || text.contains("অনুবাদ")) {
-            return JarvisAction.TranslatePage("Bengali") to if (isBn) "পেজটি বাংলায় অনুবাদ করা হচ্ছে" else "Translating to Bengali"
+        if (text.contains("হ্যালো") || text.contains("হাই") || text.contains("hello") || text.contains("hey")) {
+            return JarvisAction.SpeakOnly(if (isBn) "হ্যালো! বলুন কী করতে পারি?" else "Hello! How can I help you?") to if (isBn) "হ্যালো! বলুন কী করতে পারি?" else "Hello! How can I help you?"
         }
 
-        // Default fallback to web search with conversational tone
-        return JarvisAction.Search(raw) to if (isBn) "\"$raw\" অনুসন্ধান করা হচ্ছে" else "Searching for $raw"
+        // Search only when user asks to search or explicitly looks up something
+        if (text.startsWith("search") || text.contains("সার্চ") || text.contains("খুঁজে বের করো") || text.contains("গুগলে দেখো")) {
+            val q = raw.replace(Regex("""(?i)search( for)?|সার্চ করো|খুঁজে বের করো|গুগলে দেখো"""), "").trim()
+            val effectiveQ = q.ifBlank { raw }
+            return JarvisAction.Search(effectiveQ) to if (isBn) "\"$effectiveQ\" অনুসন্ধান করা হচ্ছে" else "Searching for $effectiveQ"
+        }
+
+        // For any other voice query, speak back friendly response
+        val spokenReply = if (isBn) "\"$raw\" সম্পর্কে বিস্তারিত জানতে সার্চ করতে পারেন অথবা আবার বলুন।" else "Understood: \"$raw\". How would you like to proceed?"
+        return JarvisAction.SpeakOnly(spokenReply) to spokenReply
     }
 
     private fun getActionDescription(action: JarvisAction): String {
