@@ -171,13 +171,19 @@ fun PrivacyDashboardSheet(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     MetricCard(
                         modifier = Modifier.weight(1f),
-                        title = "Ads Blocked",
+                        title = "Ads",
                         value = "${pageStats.adsBlocked}",
                         color = MaterialTheme.colorScheme.primary
+                    )
+                    MetricCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Video Ads",
+                        value = "${pageStats.videoAdsBlocked}",
+                        color = MaterialTheme.colorScheme.error
                     )
                     MetricCard(
                         modifier = Modifier.weight(1f),
@@ -187,8 +193,8 @@ fun PrivacyDashboardSheet(
                     )
                     MetricCard(
                         modifier = Modifier.weight(1f),
-                        title = "Third-Party",
-                        value = "${pageStats.thirdPartyBlocked}",
+                        title = "Redirects",
+                        value = "${pageStats.redirectsBlocked}",
                         color = MaterialTheme.colorScheme.tertiary
                     )
                 }
@@ -208,8 +214,22 @@ fun PrivacyDashboardSheet(
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         ProtectionRow(
+                            icon = Icons.Default.Shield,
+                            title = "Redirect & Scam Shield",
+                            status = "ACTIVE",
+                            isActive = true
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        ProtectionRow(
                             icon = Icons.Default.Block,
                             title = "Ad Network Interception",
+                            status = if (pageStats.isShieldActive) "ACTIVE" else "DISABLED",
+                            isActive = pageStats.isShieldActive
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        ProtectionRow(
+                            icon = Icons.Default.Security,
+                            title = "Video Ad Neutralizer (YouTube & Streams)",
                             status = if (pageStats.isShieldActive) "ACTIVE" else "DISABLED",
                             isActive = pageStats.isShieldActive
                         )

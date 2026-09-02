@@ -17,6 +17,8 @@ data class BrowserSettings(
     val searchEngine: SearchEngine = SearchEngine.DUCKDUCKGO,
     val adBlockingEnabled: Boolean = true,
     val trackerBlockingEnabled: Boolean = true,
+    val videoAdProtectionEnabled: Boolean = true,
+    val redirectProtectionEnabled: Boolean = true,
     val blockThirdPartyCookies: Boolean = true,
     val allowCookies: Boolean = true,
     val doNotTrack: Boolean = true,
@@ -35,6 +37,8 @@ class UserPreferences(private val context: Context) {
     private val KEY_SEARCH_ENGINE = stringPreferencesKey("search_engine")
     private val KEY_AD_BLOCK = booleanPreferencesKey("ad_block")
     private val KEY_TRACKER_BLOCK = booleanPreferencesKey("tracker_block")
+    private val KEY_VIDEO_AD_BLOCK = booleanPreferencesKey("video_ad_block")
+    private val KEY_REDIRECT_PROTECTION = booleanPreferencesKey("redirect_protection")
     private val KEY_BLOCK_3RD_PARTY_COOKIES = booleanPreferencesKey("block_3rd_party_cookies")
     private val KEY_ALLOW_COOKIES = booleanPreferencesKey("allow_cookies")
     private val KEY_DO_NOT_TRACK = booleanPreferencesKey("do_not_track")
@@ -52,6 +56,8 @@ class UserPreferences(private val context: Context) {
             searchEngine = SearchEngine.fromName(pref[KEY_SEARCH_ENGINE] ?: SearchEngine.DUCKDUCKGO.name),
             adBlockingEnabled = pref[KEY_AD_BLOCK] ?: true,
             trackerBlockingEnabled = pref[KEY_TRACKER_BLOCK] ?: true,
+            videoAdProtectionEnabled = pref[KEY_VIDEO_AD_BLOCK] ?: true,
+            redirectProtectionEnabled = pref[KEY_REDIRECT_PROTECTION] ?: true,
             blockThirdPartyCookies = pref[KEY_BLOCK_3RD_PARTY_COOKIES] ?: true,
             allowCookies = pref[KEY_ALLOW_COOKIES] ?: true,
             doNotTrack = pref[KEY_DO_NOT_TRACK] ?: true,
@@ -76,6 +82,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setTrackerBlocking(enabled: Boolean) {
         context.dataStore.edit { it[KEY_TRACKER_BLOCK] = enabled }
+    }
+
+    suspend fun setVideoAdProtection(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_VIDEO_AD_BLOCK] = enabled }
+    }
+
+    suspend fun setRedirectProtection(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_REDIRECT_PROTECTION] = enabled }
     }
 
     suspend fun setBlockThirdPartyCookies(enabled: Boolean) {

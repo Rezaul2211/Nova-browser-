@@ -2,9 +2,11 @@ package com.example.browser
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Message
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -13,14 +15,22 @@ import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.example.data.BrowserSettings
+import com.example.privacy.BlockReason
 import com.example.privacy.CookieController
+import com.example.privacy.CosmeticFilterEngine
 import com.example.privacy.FilterEngine
 import com.example.privacy.FilterRules
+import com.example.privacy.NavigationDecision
+import com.example.privacy.ResourceType
+import com.example.privacy.VideoAdProtection
+import com.example.privacy.VideoAdRequestInterceptor
 import java.io.ByteArrayInputStream
 
 class WebViewSession(
@@ -29,6 +39,7 @@ class WebViewSession(
     override val isPrivate: Boolean,
     private val filterEngine: FilterEngine,
     private val cookieController: CookieController,
+    private val settingsProvider: () -> BrowserSettings = { BrowserSettings() },
     private val onTabUpdated: (tabId: String, (BrowserTab) -> BrowserTab) -> Unit,
     private val onPageCommitted: (url: String, title: String) -> Unit,
     private val onDownloadRequested: (url: String, userAgent: String, contentDisposition: String, mimeType: String, contentLength: Long) -> Unit,
@@ -46,6 +57,10 @@ class WebViewSession(
     private val desktopUserAgent: String = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     @Volatile private var currentLoadedUrl: String = ""
 
+    override val currentUrl: String get() = currentLoadedUrl
+    override val canGoBack: Boolean get() = webView.canGoBack()
+    override val canGoForward: Boolean get() = webView.canGoForward()
+
     init {
         setupWebView()
     }
@@ -56,6 +71,8 @@ class WebViewSession(
         defaultUserAgent = settings.userAgentString
 
         settings.javaScriptEnabled = true
+        settings.javaScriptCanOpenWindowsAutomatically = false
+        settings.setSupportMultipleWindows(true)
         settings.domStorageEnabled = !isPrivate
         settings.databaseEnabled = !isPrivate
         settings.setSupportZoom(true)
@@ -84,11 +101,18 @@ class WebViewSession(
         val formattedUrl = when {
             url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> url
             url.startsWith("about:", ignoreCase = true) -> url
+            url.startsWith("javascript:", ignoreCase = true) -> url
             else -> "https://$url"
         }
         currentLoadedUrl = formattedUrl
         filterEngine.resetTabStats(tabId, formattedUrl)
         webView.loadUrl(formattedUrl)
+    }
+
+    override fun loadHtml(htmlData: String, baseUrl: String?) {
+        val base = baseUrl ?: "about:blank"
+        currentLoadedUrl = base
+        webView.loadDataWithBaseURL(base, htmlData, "text/html", "UTF-8", null)
     }
 
     override fun reload() {
@@ -111,6 +135,42 @@ class WebViewSession(
             webView.goForward()
             true
         } else false
+    }
+
+    override fun goBackOrForward(steps: Int): Boolean {
+        return if (webView.canGoBackOrForward(steps)) {
+            webView.goBackOrForward(steps)
+            true
+        } else false
+    }
+
+    override fun getBackForwardHistory(): List<HistoryEntry> {
+        val list = webView.copyBackForwardList()
+        val result = mutableListOf<HistoryEntry>()
+        for (i in 0 until list.size) {
+            val item = list.getItemAtIndex(i)
+            if (item != null) {
+                result.add(
+                    HistoryEntry(
+                        url = item.url ?: "",
+                        title = item.title ?: item.url ?: "",
+                        favicon = item.favicon,
+                        index = i
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    override fun clearHistory() {
+        webView.clearHistory()
+        onTabUpdated(tabId) {
+            it.copy(
+                canGoBack = false,
+                canGoForward = false
+            )
+        }
     }
 
     override fun evaluateJavascript(script: String, callback: ((String) -> Unit)?) {
@@ -203,6 +263,81 @@ class WebViewSession(
 
     private inner class NovaWebViewClient : WebViewClient() {
 
+        override fun shouldOverrideUrlLoading(
+            view: WebView?,
+            request: WebResourceRequest?
+        ): Boolean {
+            if (request == null) return false
+            val targetUri = request.url ?: return false
+            val currentUri = if (currentLoadedUrl.isNotBlank()) Uri.parse(currentLoadedUrl) else null
+            val hasGesture = request.hasGesture()
+            val isRedirect = request.isRedirect
+
+            val decision = filterEngine.navigationProtectionEngine.evaluateNavigation(
+                targetUri = targetUri,
+                currentUri = currentUri,
+                hasUserGesture = hasGesture,
+                isRedirect = isRedirect,
+                isUserDirectAction = false
+            )
+
+            return handleNavigationDecision(view, decision, targetUri)
+        }
+
+        @Deprecated("Deprecated in Java")
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+            if (url.isNullOrBlank()) return false
+            val targetUri = Uri.parse(url)
+            val currentUri = if (currentLoadedUrl.isNotBlank()) Uri.parse(currentLoadedUrl) else null
+
+            val decision = filterEngine.navigationProtectionEngine.evaluateNavigation(
+                targetUri = targetUri,
+                currentUri = currentUri,
+                hasUserGesture = false,
+                isRedirect = true,
+                isUserDirectAction = false
+            )
+
+            return handleNavigationDecision(view, decision, targetUri)
+        }
+
+        private fun handleNavigationDecision(
+            view: WebView?,
+            decision: NavigationDecision,
+            targetUri: Uri
+        ): Boolean {
+            return when (decision) {
+                is NavigationDecision.Allow -> {
+                    // Allow normal navigation within the WebView
+                    false
+                }
+                is NavigationDecision.Block -> {
+                    // Strictly cancel navigation and keep user securely on current page
+                    val stats = filterEngine.recordNavigationBlockedEvent(
+                        tabId = tabId,
+                        pageUrl = currentLoadedUrl,
+                        targetUrl = targetUri.toString(),
+                        reason = decision.reason,
+                        host = decision.targetHost
+                    )
+                    onTabUpdated(tabId) { it.copy(privacyStats = stats) }
+                    true
+                }
+                is NavigationDecision.ExternalIntent -> {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, targetUri).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        // Protocol not handled on device
+                    }
+                    true
+                }
+            }
+        }
+
         override fun shouldInterceptRequest(
             view: WebView?,
             request: WebResourceRequest?
@@ -214,12 +349,45 @@ class WebViewSession(
                 request.requestHeaders?.get("Referer") ?: ""
             }
             val pageUri = if (pageUrlStr.isNotBlank()) Uri.parse(pageUrlStr) else null
+            val currentSettings = settingsProvider()
 
+            // 1. Dedicated Video-Ad Request Interceptor (handles VAST/VMAP empty XML, JSON ad tags, 204 beacons)
+            if (currentSettings.videoAdProtectionEnabled) {
+                val videoIntercept = filterEngine.videoAdRequestInterceptor.shouldIntercept(
+                    request = request,
+                    pageUrl = pageUri,
+                    videoAdProtectionEnabled = true,
+                    isDomainAllowed = { filterEngine.isDomainAllowed(it) }
+                )
+                if (videoIntercept is VideoAdRequestInterceptor.InterceptResult.Blocked) {
+                    val pageHost = pageUri?.host ?: ""
+                    val isThirdParty = pageHost.isNotBlank() && !requestUrl.host.isNullOrBlank() && !requestUrl.host!!.endsWith(pageHost)
+                    val filterResult = FilterEngine.FilterResult(
+                        shouldBlock = true,
+                        reason = videoIntercept.reason,
+                        isThirdParty = isThirdParty,
+                        host = requestUrl.host ?: "",
+                        resourceType = ResourceType.MEDIA
+                    )
+                    val stats = filterEngine.recordRequestEvent(
+                        tabId = tabId,
+                        pageUrl = pageUrlStr,
+                        requestUrl = requestUrl.toString(),
+                        result = filterResult
+                    )
+                    onTabUpdated(tabId) { it.copy(privacyStats = stats) }
+                    return videoIntercept.response
+                }
+            }
+
+            // 2. Core Request Filter (Ads, Trackers, Malicious Domains)
             val filterResult = filterEngine.shouldBlockRequest(
                 requestUrl = requestUrl,
                 pageUrl = pageUri,
-                adBlockingEnabled = true,
-                trackerBlockingEnabled = true
+                adBlockingEnabled = currentSettings.adBlockingEnabled,
+                trackerBlockingEnabled = currentSettings.trackerBlockingEnabled,
+                videoAdProtectionEnabled = currentSettings.videoAdProtectionEnabled,
+                headers = request.requestHeaders
             )
 
             // Record request event and update tab stats reactively
@@ -253,8 +421,17 @@ class WebViewSession(
                     canGoForward = webView.canGoForward()
                 )
             }
-            // Inject early cosmetic CSS hide styles
-            view?.evaluateJavascript(FilterRules.COSMETIC_INJECTION_JS, null)
+            val currentSettings = settingsProvider()
+            // Inject early cosmetic CSS hide styles, anti-redirect protection, and video ad shield
+            if (currentSettings.adBlockingEnabled) {
+                view?.evaluateJavascript(CosmeticFilterEngine.COSMETIC_INJECTION_JS, null)
+            }
+            if (currentSettings.redirectProtectionEnabled) {
+                view?.evaluateJavascript(FilterRules.ANTI_REDIRECT_INJECTION_JS, null)
+            }
+            if (currentSettings.videoAdProtectionEnabled) {
+                view?.evaluateJavascript(VideoAdProtection.VIDEO_AD_SHIELD_JS, null)
+            }
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
@@ -276,8 +453,17 @@ class WebViewSession(
                 )
             }
 
-            // Inject cosmetic CSS hide stylesheet
-            view?.evaluateJavascript(FilterRules.COSMETIC_INJECTION_JS, null)
+            val currentSettings = settingsProvider()
+            // Inject cosmetic CSS hide stylesheet, anti-redirect script, and video ad shield
+            if (currentSettings.adBlockingEnabled) {
+                view?.evaluateJavascript(CosmeticFilterEngine.COSMETIC_INJECTION_JS, null)
+            }
+            if (currentSettings.redirectProtectionEnabled) {
+                view?.evaluateJavascript(FilterRules.ANTI_REDIRECT_INJECTION_JS, null)
+            }
+            if (currentSettings.videoAdProtectionEnabled) {
+                view?.evaluateJavascript(VideoAdProtection.VIDEO_AD_SHIELD_JS, null)
+            }
 
             // Persist to history if not in private mode and not a blank page
             if (!isPrivate && cleanUrl.isNotBlank() && !cleanUrl.startsWith("about:")) {
@@ -291,13 +477,103 @@ class WebViewSession(
             handler: SslErrorHandler?,
             error: SslError?
         ) {
-            onTabUpdated(tabId) { it.copy(hasSslError = true) }
+            onTabUpdated(tabId) { it.copy(hasSslError = true, isLoading = false) }
             // Privacy & security first: cancel by default on SSL error
             handler?.cancel()
+        }
+
+        override fun onReceivedError(
+            view: WebView?,
+            request: WebResourceRequest?,
+            error: WebResourceError?
+        ) {
+            super.onReceivedError(view, request, error)
+            if (request?.isForMainFrame == true) {
+                onTabUpdated(tabId) {
+                    it.copy(
+                        isLoading = false,
+                        progress = 100,
+                        canGoBack = webView.canGoBack(),
+                        canGoForward = webView.canGoForward()
+                    )
+                }
+            }
         }
     }
 
     private inner class NovaWebChromeClient : WebChromeClient() {
+
+        override fun onCreateWindow(
+            view: WebView?,
+            isDialog: Boolean,
+            isUserGesture: Boolean,
+            resultMsg: Message?
+        ): Boolean {
+            if (resultMsg == null) return false
+
+            // If window creation has no explicit user gesture, strictly block popunder
+            if (!isUserGesture) {
+                val stats = filterEngine.recordNavigationBlockedEvent(
+                    tabId = tabId,
+                    pageUrl = currentLoadedUrl,
+                    targetUrl = "popup:unsolicited",
+                    reason = BlockReason.POPUP_HIJACK,
+                    host = "popunder_script"
+                )
+                onTabUpdated(tabId) { it.copy(privacyStats = stats) }
+                return false
+            }
+
+            // Create temporary inspection view to filter new-window navigation target
+            val tempWebView = WebView(context)
+            tempWebView.settings.javaScriptEnabled = false
+            tempWebView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                    val targetUri = req?.url
+                    if (targetUri != null) {
+                        val decision = filterEngine.navigationProtectionEngine.evaluateNavigation(
+                            targetUri = targetUri,
+                            currentUri = if (currentLoadedUrl.isNotBlank()) Uri.parse(currentLoadedUrl) else null,
+                            hasUserGesture = true,
+                            isRedirect = false,
+                            isUserDirectAction = false
+                        )
+                        when (decision) {
+                            is NavigationDecision.Allow -> {
+                                loadUrl(targetUri.toString())
+                            }
+                            is NavigationDecision.Block -> {
+                                val stats = filterEngine.recordNavigationBlockedEvent(
+                                    tabId = tabId,
+                                    pageUrl = currentLoadedUrl,
+                                    targetUrl = targetUri.toString(),
+                                    reason = decision.reason,
+                                    host = decision.targetHost
+                                )
+                                onTabUpdated(tabId) { it.copy(privacyStats = stats) }
+                            }
+                            is NavigationDecision.ExternalIntent -> {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, targetUri).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {}
+                            }
+                        }
+                    }
+                    try {
+                        tempWebView.destroy()
+                    } catch (e: Exception) {}
+                    return true
+                }
+            }
+
+            val transport = resultMsg.obj as? WebView.WebViewTransport
+            transport?.webView = tempWebView
+            resultMsg.sendToTarget()
+            return true
+        }
 
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
             super.onProgressChanged(view, newProgress)

@@ -74,7 +74,9 @@ fun SettingsSheet(
     settings: BrowserSettings,
     onUpdateSearchEngine: (SearchEngine) -> Unit,
     onUpdateAdBlock: (Boolean) -> Unit,
+    onUpdateVideoAdProtection: (Boolean) -> Unit,
     onUpdateTrackerBlock: (Boolean) -> Unit,
+    onUpdateRedirectProtection: (Boolean) -> Unit,
     onUpdate3rdPartyCookies: (Boolean) -> Unit,
     onUpdateDoNotTrack: (Boolean) -> Unit,
     onUpdateHttpsOnly: (Boolean) -> Unit,
@@ -171,10 +173,24 @@ fun SettingsSheet(
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         SettingsToggleRow(
+                            title = "Redirect & Scam Guard",
+                            subtitle = "Block unwanted 3rd-party redirects, gambling, & popunders",
+                            checked = settings.redirectProtectionEnabled,
+                            onCheckedChange = onUpdateRedirectProtection
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        SettingsToggleRow(
                             title = "Ad Blocking",
-                            subtitle = "Intercept intrusive ad banners and video ads",
+                            subtitle = "Intercept intrusive ad banners, popups, and overlays",
                             checked = settings.adBlockingEnabled,
                             onCheckedChange = onUpdateAdBlock
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        SettingsToggleRow(
+                            title = "Video Ad Neutralizer",
+                            subtitle = "Auto-skip & block video ads on YouTube and video streams",
+                            checked = settings.videoAdProtectionEnabled,
+                            onCheckedChange = onUpdateVideoAdProtection
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         SettingsToggleRow(

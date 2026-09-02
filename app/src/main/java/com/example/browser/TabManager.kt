@@ -1,6 +1,7 @@
 package com.example.browser
 
 import android.content.Context
+import com.example.data.BrowserSettings
 import com.example.privacy.CookieController
 import com.example.privacy.FilterEngine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,7 @@ class TabManager(
     private val context: Context,
     private val filterEngine: FilterEngine,
     private val cookieController: CookieController,
+    private val settingsProvider: () -> BrowserSettings = { BrowserSettings() },
     private val onPageCommitted: (url: String, title: String) -> Unit,
     private val onDownloadRequested: (url: String, userAgent: String, contentDisposition: String, mimeType: String, contentLength: Long) -> Unit,
     private val customViewCallback: CustomViewCallback? = null
@@ -49,6 +51,7 @@ class TabManager(
             isPrivate = isPrivate,
             filterEngine = filterEngine,
             cookieController = cookieController,
+            settingsProvider = settingsProvider,
             onTabUpdated = { id, updater ->
                 updateTab(id, updater)
             },

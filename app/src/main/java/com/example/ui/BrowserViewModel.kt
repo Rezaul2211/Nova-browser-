@@ -81,6 +81,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         context = application,
         filterEngine = filterEngine,
         cookieController = cookieController,
+        settingsProvider = { settings.value },
         onPageCommitted = { url, title ->
             saveHistory(url, title)
         },
@@ -321,6 +322,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateTrackerBlocking(enabled: Boolean) {
         viewModelScope.launch { userPreferences.setTrackerBlocking(enabled) }
+    }
+
+    fun updateVideoAdProtection(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setVideoAdProtection(enabled) }
+    }
+
+    fun updateRedirectProtection(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setRedirectProtection(enabled) }
     }
 
     fun updateBlockThirdPartyCookies(enabled: Boolean) {
