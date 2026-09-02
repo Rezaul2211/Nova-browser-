@@ -48,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.Image
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -64,10 +65,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.ai.ChatMessage
 import com.example.ai.MessageSender
 
@@ -79,7 +82,7 @@ fun AiAssistantSheet(
     errorMessage: String?,
     onSummarize: () -> Unit,
     onExplain: () -> Unit,
-    onTranslateBangla: () -> Unit,
+    onTranslatePage: () -> Unit,
     onExtractSpecs: () -> Unit,
     onAskQuestion: (String) -> Unit,
     onClearChat: () -> Unit,
@@ -117,28 +120,21 @@ fun AiAssistantSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
+                    Image(
+                        painter = painterResource(id = R.drawable.img_auren_logo_1788383105052),
+                        contentDescription = "AUREN AI",
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "NOVA AI Assistant",
+                            text = "AUREN AI Assistant",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Powered by Google Gemini",
+                            text = "Page Summary • Analysis • Bengali Translation",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 10.sp
@@ -182,7 +178,7 @@ fun AiAssistantSheet(
                 AiActionChip(
                     label = "Translate to বাংলা",
                     icon = Icons.Default.Language,
-                    onClick = onTranslateBangla
+                    onClick = onTranslatePage
                 )
                 AiActionChip(
                     label = "Extract Specs",

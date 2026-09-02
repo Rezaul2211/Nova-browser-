@@ -6,11 +6,17 @@ import android.webkit.URLUtil
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.ChatMessage
-import com.example.ai.GeminiAiService
+import com.example.ai.AiServiceFactory
+import com.example.ai.AiService
+import com.example.ai.AiProvider
 import com.example.ai.MessageSender
 import com.example.ai.PageExtractionResult
 import com.example.ai.PageExtractor
 import com.example.ai.SelectedTextAction
+import com.example.data.AiSearchState
+import com.example.data.SearchMode
+import com.example.data.SearchSource
+import com.example.data.SearchUrlHelper
 import com.example.browser.BrowserTab
 import com.example.browser.NovaDownloadManager
 import com.example.browser.TabManager
@@ -60,7 +66,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val userPreferences = UserPreferences(application)
     val filterEngine = FilterEngine()
     val cookieController = CookieController(application)
-    val geminiService = GeminiAiService()
+    
 
     val downloadManager = NovaDownloadManager(
         context = application,
@@ -140,6 +146,16 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val _aiChatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val aiChatMessages: StateFlow<List<ChatMessage>> = _aiChatMessages.asStateFlow()
 
+    // Dual Search State
+    private val _currentSearchQuery = MutableStateFlow<String?>(null)
+    val currentSearchQuery: StateFlow<String?> = _currentSearchQuery.asStateFlow()
+
+    private val _currentSearchMode = MutableStateFlow(SearchMode.WEB)
+    val currentSearchMode: StateFlow<SearchMode> = _currentSearchMode.asStateFlow()
+
+    private val _aiSearchState = MutableStateFlow(AiSearchState())
+    val aiSearchState: StateFlow<AiSearchState> = _aiSearchState.asStateFlow()
+
     private var pendingAiAction: (() -> Unit)? = null
 
     init {
@@ -147,6 +163,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             settings.map { it.allowedAdSites }.distinctUntilChanged().collect { allowed ->
                 filterEngine.setAllowedDomains(allowed)
+            }
+        }
+
+        // Detect search engine URLs from active tab
+        viewModelScope.launch {
+            activeTab.map { it?.url }.distinctUntilChanged().collect { url ->
+                val detectedQuery = SearchUrlHelper.extractSearchQuery(url)
+                if (detectedQuery != null) {
+                    _currentSearchQuery.value = detectedQuery
+                } else if (url != null && !url.startsWith("about:") && url.isNotBlank()) {
+                    // Loaded a non-search page, reset search query
+                    _currentSearchQuery.value = null
+                    _currentSearchMode.value = SearchMode.WEB
+                }
             }
         }
 
@@ -167,6 +197,83 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             activeSession.loadUrl(targetUrl)
         } else {
             tabManager.newTab(targetUrl)
+        }
+    }
+
+    
+    fun runAiAdDetection() {
+        val tab = activeTab.value ?: return
+        val url = tab.url
+        val tabId = tab.id
+        
+        viewModelScope.launch {
+            tabManager.getSession(tabId)?.webView?.evaluateJavascript(com.example.privacy.AiAdDetector.DOM_EXTRACTION_JS) { jsonResult ->
+                if (jsonResult.isNullOrBlank() || jsonResult == "null") return@evaluateJavascript
+                
+                val json = jsonResult.replace("\\\"", "\"")
+                
+                viewModelScope.launch {
+                    val prompt = """
+                        Analyze this simplified DOM tree JSON and identify CSS selectors for elements that are likely advertisements, sponsored content, or empty ad containers (e.g. ad spaces that failed to load). 
+                        Return ONLY a valid JSON array of CSS selector strings. No markdown, no explanations.
+                        Example: [".sponsored-box", "#ad-1234", "div[data-ad='true']"]
+                        
+                        DOM JSON:
+                        ${json.take(8000)}
+                    """.trimIndent()
+                    
+                    val result = com.example.ai.AiServiceFactory.createService(settings.value.aiProvider).generateContent(
+                        prompt = prompt,
+                        customApiKey = settings.value.customGeminiApiKey.ifBlank { null },
+                        model = settings.value.aiModel.takeIf { it.isNotBlank() }
+                    )
+                    
+                    result.onSuccess { responseText ->
+                        try {
+                            val cleanText = responseText.replace("```json", "").replace("```", "").trim()
+                            val arrayMatcher = java.util.regex.Pattern.compile("\\[.*?\\]", java.util.regex.Pattern.DOTALL).matcher(cleanText)
+                            if (arrayMatcher.find()) {
+                                val arrayStr = arrayMatcher.group()
+                                val moshi = com.squareup.moshi.Moshi.Builder().add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory()).build()
+                                val adapter = moshi.adapter<List<String>>(com.squareup.moshi.Types.newParameterizedType(List::class.java, String::class.java))
+                                val selectors = adapter.fromJson(arrayStr) ?: emptyList()
+                                
+                                if (selectors.isNotEmpty()) {
+                                    val jsSelectors = selectors.joinToString(",") { "\"$it\"" }
+                                    val injectJs = """
+                                        (function() {
+                                            var selectors = [$jsSelectors];
+                                            selectors.forEach(function(sel) {
+                                                try {
+                                                    document.querySelectorAll(sel).forEach(function(el) {
+                                                        el.style.setProperty('display', 'none', 'important');
+                                                        el.style.setProperty('height', '0', 'important');
+                                                        el.style.setProperty('padding', '0', 'important');
+                                                        el.style.setProperty('margin', '0', 'important');
+                                                        // Collapse parent if empty
+                                                        var parent = el.parentElement;
+                                                        if (parent && parent.innerText.trim() === '') {
+                                                            parent.style.setProperty('display', 'none', 'important');
+                                                        }
+                                                    });
+                                                } catch(e) {}
+                                            });
+                                        })();
+                                    """.trimIndent()
+                                    tabManager.getSession(tabId)?.webView?.evaluateJavascript(injectJs) {}
+                                    
+                                    // Log stats
+                                    selectors.forEach { selector ->
+                                        filterEngine.recordAiAdDetection(tabId, url, selector)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -356,6 +463,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { userPreferences.setAiDefaultLanguage(lang) }
     }
 
+    fun updateAiProvider(provider: AiProvider) {
+        viewModelScope.launch { userPreferences.setAiProvider(provider) }
+    }
+    fun updateAiModel(model: String) {
+        viewModelScope.launch { userPreferences.setAiModel(model) }
+    }
+
     fun updateCustomGeminiApiKey(key: String) {
         viewModelScope.launch { userPreferences.setCustomGeminiApiKey(key) }
     }
@@ -401,7 +515,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    fun translatePageToBangla() {
+    fun translateCurrentPage() {
         executeAiTask(
             userPrompt = "Please translate the main points and summary of this webpage into natural, clear Bengali (বাংলা).",
             systemInstruction = "You are NOVA AI browser assistant. Provide a fluent, natural Bengali (বাংলা) translation and structured summary of the web content."
@@ -423,37 +537,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             userPrompt = "User question: $userQuestion\n\nAnswer the user's question accurately using the webpage content provided.",
             systemInstruction = "You are NOVA AI browser assistant. Answer the user's question directly based on the context. Reply in ${settings.value.aiDefaultLanguage}."
         )
-    }
-
-    fun handleSelectedText(action: SelectedTextAction, selectedText: String) {
-        if (selectedText.isBlank()) return
-
-        val prompt = when (action) {
-            SelectedTextAction.EXPLAIN -> "Explain the following text clearly:\n\n\"$selectedText\""
-            SelectedTextAction.TRANSLATE_BANGLA -> "Translate the following text into Bengali (বাংলা):\n\n\"$selectedText\""
-            SelectedTextAction.SUMMARIZE -> "Summarize this snippet:\n\n\"$selectedText\""
-            SelectedTextAction.REWRITE -> "Rewrite this text to be clearer and easier to read:\n\n\"$selectedText\""
-            SelectedTextAction.COPY -> return
-        }
-
-        _activeSheet.value = ActiveSheet.AiAssistant
-        addChatMessage(ChatMessage(sender = MessageSender.USER, text = "[${action.label}]: $selectedText"))
-
-        viewModelScope.launch {
-            _aiLoading.value = true
-            _aiError.value = null
-            val result = geminiService.generateContent(
-                prompt = prompt,
-                customApiKey = settings.value.customGeminiApiKey.ifBlank { null }
-            )
-            _aiLoading.value = false
-            result.onSuccess { responseText ->
-                addChatMessage(ChatMessage(sender = MessageSender.AI, text = responseText))
-            }.onFailure { error ->
-                _aiError.value = error.localizedMessage
-                addChatMessage(ChatMessage(sender = MessageSender.SYSTEM, text = "Error: ${error.localizedMessage}"))
-            }
-        }
     }
 
     private fun executeAiTask(userPrompt: String, systemInstruction: String) {
@@ -483,11 +566,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
 
             viewModelScope.launch {
-                val result = geminiService.generateContent(
-                    prompt = fullPrompt,
-                    customApiKey = settings.value.customGeminiApiKey.ifBlank { null },
-                    systemInstruction = systemInstruction
-                )
+                val result = AiServiceFactory.createService(settings.value.aiProvider).generateContent(
+            prompt = fullPrompt,
+            customApiKey = settings.value.customGeminiApiKey.ifBlank { null },
+            systemInstruction = systemInstruction,
+            model = settings.value.aiModel.takeIf { it.isNotBlank() }
+        )
                 _aiLoading.value = false
                 result.onSuccess { responseText ->
                     addChatMessage(ChatMessage(sender = MessageSender.AI, text = responseText))
@@ -508,6 +592,244 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         _aiError.value = null
     }
 
+    // Dual Search Handlers
+    fun performSearch(queryOrUrl: String, isAiSearch: Boolean) {
+        val trimmed = queryOrUrl.trim()
+        if (trimmed.isBlank()) return
+
+        val isUrl = trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true) ||
+            (!trimmed.contains(" ") && (
+                trimmed.contains(".com") || trimmed.contains(".org") || trimmed.contains(".net") ||
+                trimmed.contains(".io") || trimmed.contains(".edu") || trimmed.contains(".gov") ||
+                trimmed.contains(".co") || trimmed.contains(".app") || trimmed.contains(".dev") ||
+                trimmed.contains(".ai") || trimmed.contains(".me")
+            ))
+
+        if (isUrl) {
+            navigateTo(trimmed)
+            _currentSearchQuery.value = null
+            _currentSearchMode.value = SearchMode.WEB
+            return
+        }
+
+        _currentSearchQuery.value = trimmed
+        _currentSearchMode.value = if (isAiSearch) SearchMode.AI else SearchMode.WEB
+
+        // Always load web search in WebView so it's ready when user switches
+        val webSearchUrl = SearchUrlHelper.buildSearchUrl(settings.value.searchEngine, trimmed)
+        val activeSession = tabManager.getActiveSession()
+        if (activeSession != null) {
+            activeSession.loadUrl(webSearchUrl)
+        } else {
+            tabManager.newTab(webSearchUrl)
+        }
+
+        if (isAiSearch) {
+            executeAiSearch(trimmed, forceRefresh = true)
+        }
+    }
+
+    fun setSearchMode(mode: SearchMode) {
+        _currentSearchMode.value = mode
+        val query = _currentSearchQuery.value
+        if (mode == SearchMode.AI && !query.isNullOrBlank()) {
+            if (_aiSearchState.value.query != query || (_aiSearchState.value.answer == null && !_aiSearchState.value.isLoading)) {
+                executeAiSearch(query)
+            }
+        }
+    }
+
+    fun executeAiSearch(query: String, forceRefresh: Boolean = false) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+
+        if (!forceRefresh && _aiSearchState.value.query == trimmed && _aiSearchState.value.answer != null) {
+            return
+        }
+
+        if (!settings.value.aiEnabled) {
+            _aiSearchState.value = AiSearchState(
+                query = trimmed,
+                isLoading = false,
+                error = "AI Search is disabled in Settings. Enable AI Assistant to use AI Search.",
+                providerName = settings.value.aiProvider.displayName
+            )
+            return
+        }
+
+        _aiSearchState.value = AiSearchState(
+            query = trimmed,
+            isLoading = true,
+            providerName = settings.value.aiProvider.displayName,
+            modelName = settings.value.aiModel.ifBlank { settings.value.aiProvider.defaultModel }
+        )
+
+        val session = tabManager.getActiveSession()
+        session?.extractPageText { rawJson ->
+            val pageData = PageExtractor.parseExtractionResult(rawJson)
+            val isSearchEnginePage = SearchUrlHelper.isSearchEngineUrl(pageData.url)
+            val webContext = if (isSearchEnginePage && pageData.content.isNotBlank()) pageData.content else ""
+
+            val detectedSources = mutableListOf<SearchSource>()
+            if (isSearchEnginePage) {
+                val host = try { Uri.parse(pageData.url).host?.replace("www.", "") ?: "" } catch (e: Exception) { "" }
+                if (host.isNotBlank()) {
+                    detectedSources.add(
+                        SearchSource(
+                            title = "${settings.value.searchEngine.displayName} Results",
+                            url = pageData.url,
+                            domain = host
+                        )
+                    )
+                }
+            }
+
+            viewModelScope.launch {
+                val systemInstruction = """
+                    You are AUREN AI Search, the intelligent search synthesis engine in AUREN Browser.
+                    Your goal is to provide a concise, factual, and direct answer based on the user's search query and relevant web information.
+
+                    Key Guidelines:
+                    1. Direct & Concise: Answer the user's query directly without conversational filler ("Sure, here is...").
+                    2. Synthesis: Structure your answer logically with clear markdown headings (## or ###), bullet points for key facts, and bold text for crucial terminology.
+                    3. Accuracy: Strictly avoid inventing facts, statistics, or URLs. If information is uncertain or varies, state so clearly.
+                    4. Freshness: For current events or time-sensitive questions, prefer the most recent known information.
+                    5. Citations: Where appropriate, cite sources or domains in brackets (e.g., [Wikipedia], [Official Documentation], [BBC], [Reuters], [GitHub]) so the user can verify.
+                    6. Language: Reply in ${settings.value.aiDefaultLanguage}.
+                """.trimIndent()
+
+                val prompt = buildString {
+                    appendLine("User Search Query: \"$trimmed\"")
+                    if (webContext.isNotBlank()) {
+                        appendLine("\nRelevant Web Search Snippets & Page Context:")
+                        appendLine(webContext.take(6000))
+                    }
+                    appendLine("\nProvide a synthesized, accurate AI search answer with key facts and source citations.")
+                }
+
+                val result = AiServiceFactory.createService(settings.value.aiProvider).generateContent(
+                    prompt = prompt,
+                    customApiKey = settings.value.customGeminiApiKey.ifBlank { null },
+                    systemInstruction = systemInstruction,
+                    model = settings.value.aiModel.takeIf { it.isNotBlank() }
+                )
+
+                result.onSuccess { answerText ->
+                    val finalSources = detectedSources.toMutableList()
+                    val domainRegex = Regex("""\[([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})]""")
+                    domainRegex.findAll(answerText).forEach { match ->
+                        val domain = match.groupValues[1]
+                        if (finalSources.none { it.domain.equals(domain, ignoreCase = true) }) {
+                            finalSources.add(
+                                SearchSource(
+                                    title = domain,
+                                    url = "https://$domain",
+                                    domain = domain
+                                )
+                            )
+                        }
+                    }
+
+                    _aiSearchState.value = AiSearchState(
+                        query = trimmed,
+                        isLoading = false,
+                        answer = answerText,
+                        sources = finalSources.take(5),
+                        providerName = settings.value.aiProvider.displayName,
+                        modelName = settings.value.aiModel.ifBlank { settings.value.aiProvider.defaultModel }
+                    )
+                }.onFailure { error ->
+                    _aiSearchState.value = AiSearchState(
+                        query = trimmed,
+                        isLoading = false,
+                        error = error.localizedMessage ?: "Failed to generate AI search result. Web results remain available.",
+                        providerName = settings.value.aiProvider.displayName
+                    )
+                }
+            }
+        } ?: run {
+            viewModelScope.launch {
+                val systemInstruction = "You are AUREN AI Search. Provide a factual, concise synthesis answering the user's search query. Reply in ${settings.value.aiDefaultLanguage}."
+                val result = AiServiceFactory.createService(settings.value.aiProvider).generateContent(
+                    prompt = "User Search Query: \"$trimmed\"\n\nSynthesize a clear, accurate, and structured answer for this search query with key facts and source citations.",
+                    customApiKey = settings.value.customGeminiApiKey.ifBlank { null },
+                    systemInstruction = systemInstruction,
+                    model = settings.value.aiModel.takeIf { it.isNotBlank() }
+                )
+                result.onSuccess { answerText ->
+                    _aiSearchState.value = AiSearchState(
+                        query = trimmed,
+                        isLoading = false,
+                        answer = answerText,
+                        providerName = settings.value.aiProvider.displayName,
+                        modelName = settings.value.aiModel.ifBlank { settings.value.aiProvider.defaultModel }
+                    )
+                }.onFailure { error ->
+                    _aiSearchState.value = AiSearchState(
+                        query = trimmed,
+                        isLoading = false,
+                        error = error.localizedMessage ?: "Failed to generate AI search answer.",
+                        providerName = settings.value.aiProvider.displayName
+                    )
+                }
+            }
+        }
+    }
+
+    fun askAiSearchFollowUp(followUpQuestion: String) {
+        val trimmed = followUpQuestion.trim()
+        if (trimmed.isBlank()) return
+        val currentState = _aiSearchState.value
+        if (currentState.answer == null) return
+
+        val updatedFollowUps = currentState.followUps + ChatMessage(sender = MessageSender.USER, text = trimmed)
+        _aiSearchState.value = currentState.copy(
+            followUps = updatedFollowUps,
+            isFollowUpLoading = true
+        )
+
+        viewModelScope.launch {
+            val prompt = buildString {
+                appendLine("Original Search Query: \"${currentState.query}\"")
+                appendLine("Initial AI Search Synthesis:\n${currentState.answer}")
+                appendLine()
+                if (currentState.followUps.isNotEmpty()) {
+                    appendLine("Follow-up Q&A History:")
+                    currentState.followUps.forEach { msg ->
+                        appendLine("${if (msg.sender == MessageSender.USER) "User" else "AI"}: ${msg.text}")
+                    }
+                    appendLine()
+                }
+                appendLine("Follow-up Question: $trimmed")
+                appendLine("Answer the follow-up concisely and accurately in ${settings.value.aiDefaultLanguage}.")
+            }
+
+            val result = AiServiceFactory.createService(settings.value.aiProvider).generateContent(
+                prompt = prompt,
+                customApiKey = settings.value.customGeminiApiKey.ifBlank { null },
+                systemInstruction = "You are AUREN AI Search. Answer follow-up questions accurately and concisely in ${settings.value.aiDefaultLanguage}.",
+                model = settings.value.aiModel.takeIf { it.isNotBlank() }
+            )
+
+            result.onSuccess { replyText ->
+                _aiSearchState.update { state ->
+                    state.copy(
+                        followUps = state.followUps + ChatMessage(sender = MessageSender.AI, text = replyText),
+                        isFollowUpLoading = false
+                    )
+                }
+            }.onFailure { error ->
+                _aiSearchState.update { state ->
+                    state.copy(
+                        followUps = state.followUps + ChatMessage(sender = MessageSender.SYSTEM, text = "Error: ${error.localizedMessage}"),
+                        isFollowUpLoading = false
+                    )
+                }
+            }
+        }
+    }
+
     // Helper: URL vs Search
     companion object {
         fun resolveUrlOrSearch(query: String, searchEngine: SearchEngine): String {
@@ -526,5 +848,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             // Otherwise search query
             return searchEngine.searchUrl + Uri.encode(trimmed)
         }
+    }
+
+
+    fun handleSelectedText(action: SelectedTextAction, selectedText: String) {
+        if (selectedText.isBlank()) return
+
+        val prompt = when (action) {
+            SelectedTextAction.EXPLAIN -> "Explain the following text clearly:\n\n\"$selectedText\""
+            SelectedTextAction.TRANSLATE_BANGLA -> "Translate the following text into ${settings.value.aiDefaultLanguage}:\n\n\"$selectedText\""
+            SelectedTextAction.SUMMARIZE -> "Summarize this snippet:\n\n\"$selectedText\""
+            SelectedTextAction.COPY -> ""
+            SelectedTextAction.ASK -> "Answer a question about the following text:\n\n\"$selectedText\""
+            SelectedTextAction.REWRITE_SIMPLIFY -> "Rewrite this text to be simpler:\n\n\"$selectedText\""
+            SelectedTextAction.REWRITE_SHORTEN -> "Rewrite this text to be shorter and more concise:\n\n\"$selectedText\""
+            SelectedTextAction.REWRITE_PROFESSIONAL -> "Rewrite this text in a professional tone:\n\n\"$selectedText\""
+            SelectedTextAction.REWRITE_CASUAL -> "Rewrite this text in a casual tone:\n\n\"$selectedText\""
+            SelectedTextAction.REWRITE_ACADEMIC -> "Rewrite this text in an academic tone:\n\n\"$selectedText\""
+        }
+        askAiAboutPage(prompt)
     }
 }

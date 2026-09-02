@@ -86,6 +86,10 @@ class FilterEngine {
         adBlockEngine.resetTabStats(tabId, newUrl)
     }
 
+    fun recordAiAdDetection(tabId: String, pageUrl: String, elementInfo: String): PagePrivacyStats {
+        return adBlockEngine.recordAiAdDetection(tabId, pageUrl, elementInfo)
+    }
+
     fun getPageStats(tabId: String): PagePrivacyStats {
         return adBlockEngine.getPageStats(tabId)
     }

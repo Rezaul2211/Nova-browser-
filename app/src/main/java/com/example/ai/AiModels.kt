@@ -24,8 +24,15 @@ enum class AiTaskType(val label: String, val iconName: String) {
 enum class SelectedTextAction(val label: String) {
     EXPLAIN("Explain"),
     TRANSLATE_BANGLA("Translate to বাংলা"),
+    ASK("Ask AUREN"),
     SUMMARIZE("Summarize"),
-    REWRITE("Rewrite / Simplify"),
+    
+    REWRITE_SIMPLIFY("Simplify"),
+    REWRITE_SHORTEN("Shorten"),
+    REWRITE_PROFESSIONAL("Professional Tone"),
+    REWRITE_CASUAL("Casual Tone"),
+    REWRITE_ACADEMIC("Academic Tone"),
+
     COPY("Copy")
 }
 

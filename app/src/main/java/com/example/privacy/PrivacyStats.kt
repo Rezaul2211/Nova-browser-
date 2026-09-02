@@ -5,6 +5,8 @@ data class PagePrivacyStats(
     val pageHost: String = "",
     val totalRequests: Int = 0,
     val adsBlocked: Int = 0,
+    val aiAdsBlocked: Int = 0,
+    val aiAdDetections: List<String> = emptyList(),
     val trackersBlocked: Int = 0,
     val videoAdsBlocked: Int = 0,
     val thirdPartyBlocked: Int = 0,
@@ -24,6 +26,7 @@ data class BlockedRequestInfo(
 
 enum class BlockReason(val label: String) {
     AD_NETWORK("Ad Network"),
+    AI_DETECTED_AD("AI Detected Ad"),
     TRACKER("Tracker / Analytics"),
     VIDEO_AD("Video Ad / Stream Ad"),
     FINGERPRINTING("Fingerprinting Script"),
@@ -38,6 +41,7 @@ enum class BlockReason(val label: String) {
 
 data class CumulativePrivacyStats(
     val totalAdsBlocked: Long = 0,
+    val totalAiAdsBlocked: Long = 0,
     val totalTrackersBlocked: Long = 0,
     val totalVideoAdsBlocked: Long = 0,
     val totalThirdPartyBlocked: Long = 0,

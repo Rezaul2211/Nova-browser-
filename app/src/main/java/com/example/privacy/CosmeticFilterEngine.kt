@@ -2,7 +2,7 @@ package com.example.privacy
 
 /**
  * Handles cosmetic hiding of ad frames, sponsored placeholders, blank spaces,
- * and neutralizes anti-adblock modals.
+ * empty ad container collapsing, and neutralizes anti-adblock modals.
  */
 object CosmeticFilterEngine {
 
@@ -42,12 +42,15 @@ object CosmeticFilterEngine {
             min-height: 0 !important;
             opacity: 0 !important;
             pointer-events: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
         }
     """.trimIndent().replace("\n", " ")
 
     val COSMETIC_INJECTION_JS: String = """
         (function() {
-            if (document.getElementById('nova-adblock-styles')) return;
+            if (window.__nova_cosmetic_installed) return;
+            window.__nova_cosmetic_installed = true;
 
             // 1. Inject Cosmetic CSS rules
             var style = document.createElement('style');
@@ -64,54 +67,123 @@ object CosmeticFilterEngine {
                 window.adblock = false;
             } catch(e) {}
 
-            // 3. Dynamic Anti-Adblock Overlay Neutralization & Unblock Scrolling
-            function neutralizeAntiAdblockModals() {
+            // Helper to recursively hide empty ad containers
+            function collapseEmptyAdSpace(element, maxDepth) {
+                var current = element;
+                var depth = 0;
+                while (current && current !== document.body && depth < maxDepth) {
+                    var rect = current.getBoundingClientRect();
+                    // If this container is now empty or just wrapping the hidden ad
+                    if (current.innerText.trim() === '' || rect.height === 0 || rect.width === 0) {
+                        current.style.setProperty('display', 'none', 'important');
+                        current.style.setProperty('height', '0', 'important');
+                        current.style.setProperty('padding', '0', 'important');
+                        current.style.setProperty('margin', '0', 'important');
+                    } else {
+                        break;
+                    }
+                    current = current.parentElement;
+                    depth++;
+                }
+            }
+
+            // 3. Dynamic Ad Cleanup and Blank Space Removal
+            function cleanupAdsAndSpaces() {
                 try {
-                    // Check for typical anti-adblock modal classes
-                    var antiAdblockSelectors = [
-                        '.fc-dialog-container',
-                        '.fc-ab-root',
-                        '.sp_message_container',
-                        '.tp-modal',
-                        '.tp-backdrop',
-                        '[class*="adblock-modal"]',
-                        '[class*="adblocker-backdrop"]',
-                        '[id*="adblock-overlay"]',
-                        '.modal-adblock'
+                    // Hide empty ad blocks (where ad request was blocked)
+                    var adSelectors = [
+                        '.adsbygoogle', '[id^="google_ads_"]', '[id^="div-gpt-ad"]',
+                        '[class*="ad-container"]', '[class*="ad-slot"]', 'ins.adsbygoogle',
+                        'iframe[src*="doubleclick.net"]', 'iframe[src*="googleads"]',
+                        'iframe[src*="googlesyndication.com"]', 'iframe[src*="adsystem"]'
                     ];
 
+                    adSelectors.forEach(function(sel) {
+                        document.querySelectorAll(sel).forEach(function(el) {
+                            el.style.setProperty('display', 'none', 'important');
+                            collapseEmptyAdSpace(el.parentElement, 3);
+                        });
+                    });
+
+                    // Search for generic divs that might be reserved ad spaces
+                    var allDivs = document.querySelectorAll('div');
+                    allDivs.forEach(function(div) {
+                        var id = (div.id || '').toLowerCase();
+                        var cls = (div.className || '');
+                        if (typeof cls !== 'string') {
+                            if (cls.baseVal) cls = cls.baseVal;
+                            else cls = '';
+                        }
+                        cls = cls.toLowerCase();
+                        
+                        var isAd = id.indexOf('ad-') === 0 || id.indexOf('-ad') !== -1 ||
+                                   id.indexOf('advert') !== -1 || id.indexOf('banner') !== -1 ||
+                                   cls.indexOf('ad-container') !== -1 || cls.indexOf('ad-wrapper') !== -1 ||
+                                   cls.indexOf('sponsored') !== -1 || cls.indexOf('promoted') !== -1;
+                        
+                        if (isAd && div.innerText.trim() === '') {
+                            div.style.setProperty('display', 'none', 'important');
+                            div.style.setProperty('height', '0', 'important');
+                            div.style.setProperty('padding', '0', 'important');
+                            collapseEmptyAdSpace(div.parentElement, 2);
+                        }
+                    });
+
+                    // Neutralize anti-adblock modals
+                    var antiAdblockSelectors = [
+                        '.fc-dialog-container', '.fc-ab-root', '.sp_message_container',
+                        '.tp-modal', '.tp-backdrop', '[class*="adblock-modal"]',
+                        '[class*="adblocker-backdrop"]', '[id*="adblock-overlay"]', '.modal-adblock'
+                    ];
                     var foundModal = false;
                     antiAdblockSelectors.forEach(function(sel) {
-                        var elements = document.querySelectorAll(sel);
-                        elements.forEach(function(el) {
+                        document.querySelectorAll(sel).forEach(function(el) {
                             el.style.setProperty('display', 'none', 'important');
-                            el.style.setProperty('visibility', 'hidden', 'important');
                             foundModal = true;
                         });
                     });
 
-                    // If a modal was blocking the page, restore body scrolling and unblur content
                     if (foundModal) {
                         if (document.body) {
                             document.body.style.setProperty('overflow', 'auto', 'important');
                             document.body.style.setProperty('position', 'static', 'important');
-                            document.body.style.setProperty('filter', 'none', 'important');
                         }
                         if (document.documentElement) {
                             document.documentElement.style.setProperty('overflow', 'auto', 'important');
-                            document.documentElement.style.setProperty('filter', 'none', 'important');
                         }
                     }
                 } catch(e) {}
             }
 
+            // Run cleanup initially
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', neutralizeAntiAdblockModals);
+                document.addEventListener('DOMContentLoaded', cleanupAdsAndSpaces);
             } else {
-                neutralizeAntiAdblockModals();
+                cleanupAdsAndSpaces();
             }
-            setTimeout(neutralizeAntiAdblockModals, 1000);
-            setTimeout(neutralizeAntiAdblockModals, 2500);
+            setTimeout(cleanupAdsAndSpaces, 500);
+            setTimeout(cleanupAdsAndSpaces, 1500);
+
+            // 4. MutationObserver for lazy-loaded ads
+            try {
+                var observer = new MutationObserver(function(mutations) {
+                    var shouldRunCleanup = false;
+                    mutations.forEach(function(mutation) {
+                        if (mutation.addedNodes.length > 0) {
+                            shouldRunCleanup = true;
+                        }
+                    });
+                    if (shouldRunCleanup) {
+                        // Debounce the cleanup slightly to save CPU
+                        if (window.__nova_cleanup_timeout) {
+                            clearTimeout(window.__nova_cleanup_timeout);
+                        }
+                        window.__nova_cleanup_timeout = setTimeout(cleanupAdsAndSpaces, 400);
+                    }
+                });
+                observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+            } catch(e) {}
+
         })();
     """.trimIndent()
 }

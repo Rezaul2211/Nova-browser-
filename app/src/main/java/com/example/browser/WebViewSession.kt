@@ -423,7 +423,9 @@ class WebViewSession(
             }
             val currentSettings = settingsProvider()
             // Inject early cosmetic CSS hide styles, anti-redirect protection, and video ad shield
-            if (currentSettings.adBlockingEnabled) {
+            val host = Uri.parse(cleanUrl).host ?: ""
+            val isAllowed = filterEngine.isDomainAllowed(host)
+            if (currentSettings.adBlockingEnabled && !isAllowed) {
                 view?.evaluateJavascript(CosmeticFilterEngine.COSMETIC_INJECTION_JS, null)
             }
             if (currentSettings.redirectProtectionEnabled) {
@@ -455,7 +457,9 @@ class WebViewSession(
 
             val currentSettings = settingsProvider()
             // Inject cosmetic CSS hide stylesheet, anti-redirect script, and video ad shield
-            if (currentSettings.adBlockingEnabled) {
+            val host = Uri.parse(cleanUrl).host ?: ""
+            val isAllowed = filterEngine.isDomainAllowed(host)
+            if (currentSettings.adBlockingEnabled && !isAllowed) {
                 view?.evaluateJavascript(CosmeticFilterEngine.COSMETIC_INJECTION_JS, null)
             }
             if (currentSettings.redirectProtectionEnabled) {

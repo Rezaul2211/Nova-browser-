@@ -294,7 +294,8 @@ object FilterRules {
         Regex(".*/beacon\\.(js|gif).*", RegexOption.IGNORE_CASE),
         Regex(".*/gtag/js.*", RegexOption.IGNORE_CASE),
         Regex(".*/fbevents\\.js.*", RegexOption.IGNORE_CASE),
-        Regex(".*/analytics\\.js.*", RegexOption.IGNORE_CASE)
+        Regex(".*/analytics\\.js.*", RegexOption.IGNORE_CASE),
+        Regex(".*(/ad/|/ads/|/advert/|/advertisement/|/banner/|/sponsor/|/promoted/|/doubleclick/|/pagead/|/googlesyndication/|/googleadservices/|/adservice/|/prebid/|/bid/|/vast/|/vmap/).*", RegexOption.IGNORE_CASE)
     )
 
     // Cosmetic CSS selectors injected to hide placeholder frames and intrusive blocks

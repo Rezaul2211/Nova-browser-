@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,15 +27,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Image
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phonelink
 import androidx.compose.material.icons.filled.Security
@@ -45,6 +49,8 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,16 +69,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.R
+import com.example.data.SearchMode
 import com.example.ui.components.AddressBar
 import com.example.ui.components.AiAssistantSheet
 import com.example.ui.components.AiConsentDialog
+import com.example.ui.components.AiSearchResultsView
 import com.example.ui.components.BookmarksHistorySheet
 import com.example.ui.components.ClearDataDialog
 import com.example.ui.components.DownloadsSheet
+import com.example.ui.components.DualSearchTabBar
 import com.example.ui.components.NewTabPage
 import com.example.ui.components.PrivacyDashboardSheet
 import com.example.ui.components.SettingsSheet
@@ -100,12 +111,19 @@ fun BrowserScreen(
     val aiLoading by viewModel.aiLoading.collectAsState()
     val aiError by viewModel.aiError.collectAsState()
 
+    // Dual Search States
+    val currentSearchQuery by viewModel.currentSearchQuery.collectAsState()
+    val currentSearchMode by viewModel.currentSearchMode.collectAsState()
+    val aiSearchState by viewModel.aiSearchState.collectAsState()
+
     var moreMenuExpanded by remember { mutableStateOf(false) }
 
     // Intercept Back Press
     BackHandler {
         if (activeSheet !is ActiveSheet.None) {
             viewModel.closeSheet()
+        } else if (currentSearchMode == SearchMode.AI && currentSearchQuery != null) {
+            viewModel.setSearchMode(SearchMode.WEB)
         } else if (viewModel.goBack()) {
             // Handled WebView back
         } else if (tabs.size > 1) {
@@ -119,20 +137,36 @@ fun BrowserScreen(
         modifier = modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .background(MaterialTheme.colorScheme.background)
-            ) {
-                AddressBar(
-                    tab = activeTab,
-                    onNavigate = { viewModel.navigateTo(it) },
-                    onReload = { viewModel.reloadActiveTab() },
-                    onStop = { viewModel.stopActiveTab() },
-                    onShieldClick = { viewModel.openSheet(ActiveSheet.PrivacyDashboard) },
-                    onDesktopModeToggle = { viewModel.toggleDesktopMode() }
-                )
+            if (!isHomeVisible) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
+                    AddressBar(
+                        tab = activeTab,
+                        onNavigate = { queryOrUrl, isAiSearch ->
+                            viewModel.performSearch(queryOrUrl, isAiSearch)
+                        },
+                        onReload = { viewModel.reloadActiveTab() },
+                        onStop = { viewModel.stopActiveTab() },
+                        onShieldClick = { viewModel.openSheet(ActiveSheet.PrivacyDashboard) },
+                        onDesktopModeToggle = { viewModel.toggleDesktopMode() },
+                        searchEngineName = settings.searchEngine.displayName,
+                        aiProviderName = "AUREN AI (${settings.aiProvider.displayName})"
+                    )
+
+                    // Dual Search Tabs for Search Engine Results
+                    if (currentSearchQuery != null) {
+                        DualSearchTabBar(
+                            currentMode = currentSearchMode,
+                            onModeSelected = { mode -> viewModel.setSearchMode(mode) },
+                            query = currentSearchQuery ?: "",
+                            aiProviderName = settings.aiProvider.displayName
+                        )
+                    }
+                }
             }
         },
         bottomBar = {
@@ -140,20 +174,20 @@ fun BrowserScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding(),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-                tonalElevation = 8.dp,
-                shadowElevation = 8.dp
+                color = if (isHomeVisible) Color(0xFFFBFBFA) else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                border = BorderStroke(0.5.dp, if (isHomeVisible) Color(0xFFE8E6DF) else Color.White.copy(alpha = 0.08f)),
+                tonalElevation = 4.dp,
+                shadowElevation = 6.dp
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp)
-                        .padding(horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
+                        .height(58.dp)
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Back
+                    // 1. Back
                     IconButton(
                         onClick = { viewModel.goBack() },
                         enabled = activeTab?.canGoBack == true,
@@ -162,11 +196,15 @@ fun BrowserScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = if (activeTab?.canGoBack == true) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            tint = if (activeTab?.canGoBack == true) {
+                                if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                            } else {
+                                (if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.35f)
+                            }
                         )
                     }
 
-                    // Forward
+                    // 2. Forward
                     IconButton(
                         onClick = { viewModel.goForward() },
                         enabled = activeTab?.canGoForward == true,
@@ -175,80 +213,72 @@ fun BrowserScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "Forward",
-                            tint = if (activeTab?.canGoForward == true) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            tint = if (activeTab?.canGoForward == true) {
+                                if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                            } else {
+                                (if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.35f)
+                            }
                         )
                     }
 
-                    // Home
-                    IconButton(
-                        onClick = { viewModel.openNewTab() },
-                        modifier = Modifier.testTag("nav_home_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Home,
-                            contentDescription = "Home",
-                            tint = if (isHomeVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
-                    }
-
-                    // Elevated Center AI Assistant Button
-                    IconButton(
+                    // 3. Center Elevated AI Assistant Button (Auren Metallic Logo)
+                    Surface(
                         onClick = {
                             viewModel.requestAiAction {
                                 viewModel.openSheet(ActiveSheet.AiAssistant)
                             }
                         },
+                        shape = CircleShape,
+                        color = if (isHomeVisible) Color(0xFFF7F6F2) else MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(1.dp, if (isHomeVisible) Color(0xFFD6D1C6) else MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                        shadowElevation = 3.dp,
                         modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
+                            .size(44.dp)
                             .testTag("nav_ai_button")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "AI Assistant",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    // Tabs Switcher Button
-                    IconButton(
-                        onClick = { viewModel.openSheet(ActiveSheet.Tabs) },
-                        modifier = Modifier.testTag("nav_tabs_button")
-                    ) {
-                        BadgedBox(
-                            badge = {
-                                Badge(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                ) {
-                                    Text(
-                                        text = "${tabs.size}",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Tab,
-                                contentDescription = "Open Tabs",
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Image(
+                                painter = painterResource(id = R.drawable.img_auren_logo_1788383105052),
+                                contentDescription = "AUREN AI",
+                                modifier = Modifier.size(26.dp)
                             )
                         }
                     }
 
-                    // More Menu
+                    // 4. Tabs Switcher Button [ 1 ]
+                    IconButton(
+                        onClick = { viewModel.openSheet(ActiveSheet.Tabs) },
+                        modifier = Modifier.testTag("nav_tabs_button")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .border(
+                                    width = 1.6.dp,
+                                    color = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface,
+                                    shape = RoundedCornerShape(6.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${tabs.size}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    // 5. More Menu (...)
                     Box {
                         IconButton(
                             onClick = { moreMenuExpanded = true },
                             modifier = Modifier.testTag("nav_more_menu_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.MoreVert,
+                                imageVector = Icons.Default.MoreHoriz,
                                 contentDescription = "More Options",
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                tint = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                             )
                         }
 
@@ -256,6 +286,15 @@ fun BrowserScreen(
                             expanded = moreMenuExpanded,
                             onDismissRequest = { moreMenuExpanded = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("New Tab / Home") },
+                                leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                                onClick = {
+                                    viewModel.openNewTab()
+                                    moreMenuExpanded = false
+                                }
+                            )
+
                             DropdownMenuItem(
                                 text = { Text(if (isBookmarked) "Remove Bookmark" else "Bookmark Page") },
                                 leadingIcon = {
@@ -339,7 +378,7 @@ fun BrowserScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Main Webview Container vs Home Page
+            // Main Webview Container vs Home Page vs AI Results View
             if (isHomeVisible) {
                 NewTabPage(
                     searchEngine = settings.searchEngine,
@@ -347,7 +386,8 @@ fun BrowserScreen(
                     bookmarks = bookmarks,
                     recentHistory = recentHistory,
                     isPrivate = activeTab?.isPrivate == true,
-                    onNavigate = { viewModel.navigateTo(it) },
+                    onNavigate = { query -> viewModel.performSearch(query, isAiSearch = false) },
+                    onNavigateAi = { query -> viewModel.performSearch(query, isAiSearch = true) },
                     onOpenAi = {
                         viewModel.requestAiAction {
                             viewModel.openSheet(ActiveSheet.AiAssistant)
@@ -356,31 +396,80 @@ fun BrowserScreen(
                     onOpenBookmarks = { viewModel.openSheet(ActiveSheet.BookmarksHistory) },
                     onOpenHistory = { viewModel.openSheet(ActiveSheet.BookmarksHistory) }
                 )
+            } else if (currentSearchMode == SearchMode.AI && currentSearchQuery != null) {
+                // Dedicated AI Search Results View
+                AiSearchResultsView(
+                    query = currentSearchQuery ?: "",
+                    aiSearchState = aiSearchState,
+                    onFollowUpSubmit = { followUp -> viewModel.askAiSearchFollowUp(followUp) },
+                    onSourceClick = { url -> viewModel.navigateTo(url) },
+                    onSwitchToWeb = { viewModel.setSearchMode(SearchMode.WEB) },
+                    onRetry = { viewModel.executeAiSearch(currentSearchQuery ?: "", forceRefresh = true) },
+                    onOpenSettings = { viewModel.openSheet(ActiveSheet.Settings) }
+                )
             } else {
-                val activeSession = viewModel.tabManager.getActiveSession()
-                if (activeSession != null) {
-                    AndroidView(
-                        factory = { ctx ->
-                            FrameLayout(ctx).apply {
-                                layoutParams = ViewGroup.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT
+                // Web Search Engine Results / Normal Web Page
+                Box(modifier = Modifier.fillMaxSize()) {
+                    val activeSession = viewModel.tabManager.getActiveSession()
+                    if (activeSession != null) {
+                        AndroidView(
+                            factory = { ctx ->
+                                FrameLayout(ctx).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                    (activeSession.webView.parent as? ViewGroup)?.removeView(activeSession.webView)
+                                    addView(activeSession.webView)
+                                }
+                            },
+                            update = { container ->
+                                if (container.indexOfChild(activeSession.webView) == -1) {
+                                    (activeSession.webView.parent as? ViewGroup)?.removeView(activeSession.webView)
+                                    container.removeAllViews()
+                                    container.addView(activeSession.webView)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("active_webview_container")
+                        )
+                    }
+
+                    // Floating quick-switch to AI Results when viewing Web Search results
+                    if (currentSearchQuery != null) {
+                        Surface(
+                            onClick = { viewModel.setSearchMode(SearchMode.AI) },
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                            shadowElevation = 6.dp,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 16.dp)
+                                .testTag("floating_switch_to_ai_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                (activeSession.webView.parent as? ViewGroup)?.removeView(activeSession.webView)
-                                addView(activeSession.webView)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Synthesize with AUREN AI",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                )
                             }
-                        },
-                        update = { container ->
-                            if (container.indexOfChild(activeSession.webView) == -1) {
-                                (activeSession.webView.parent as? ViewGroup)?.removeView(activeSession.webView)
-                                container.removeAllViews()
-                                container.addView(activeSession.webView)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("active_webview_container")
-                    )
+                        }
+                    }
                 }
             }
         }
@@ -408,6 +497,7 @@ fun BrowserScreen(
                 pageStats = activeTab?.privacyStats ?: com.example.privacy.PagePrivacyStats(),
                 cumulativeStats = cumulativeStats,
                 onToggleSiteShield = { viewModel.toggleSiteShield() },
+                onAiScan = { viewModel.runAiAdDetection(); viewModel.closeSheet() },
                 onDismiss = { viewModel.closeSheet() }
             )
         }
@@ -419,7 +509,7 @@ fun BrowserScreen(
                 errorMessage = aiError,
                 onSummarize = { viewModel.summarizeCurrentPage() },
                 onExplain = { viewModel.explainPageSimply() },
-                onTranslateBangla = { viewModel.translatePageToBangla() },
+                onTranslatePage = { viewModel.translateCurrentPage() },
                 onExtractSpecs = { viewModel.extractPageSpecs() },
                 onAskQuestion = { viewModel.askAiAboutPage(it) },
                 onClearChat = { viewModel.clearAiChat() },
@@ -465,7 +555,11 @@ fun BrowserScreen(
                 onUpdateDoNotTrack = { viewModel.updateDoNotTrack(it) },
                 onUpdateHttpsOnly = { viewModel.updateHttpsOnly(it) },
                 onUpdateAiEnabled = { viewModel.updateAiEnabled(it) },
+                onUpdateAiProvider = { viewModel.updateAiProvider(it) },
+                onUpdateAiModel = { viewModel.updateAiModel(it) },
+                onUpdateLanguage = { viewModel.updateAiDefaultLanguage(it) },
                 onUpdateAiConfirm = { viewModel.updateAiConfirmBeforeSend(it) },
+
                 onUpdateAiLanguage = { viewModel.updateAiDefaultLanguage(it) },
                 onUpdateCustomApiKey = { viewModel.updateCustomGeminiApiKey(it) },
                 onUpdateThemeMode = { viewModel.updateThemeMode(it) },

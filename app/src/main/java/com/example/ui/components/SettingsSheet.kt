@@ -55,6 +55,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.BrowserSettings
+import com.example.ai.AiProvider
 import com.example.data.SearchEngine
 
 val SUPPORTED_AI_LANGUAGES = listOf(
@@ -85,6 +86,9 @@ fun SettingsSheet(
     onUpdateAiLanguage: (String) -> Unit,
     onUpdateCustomApiKey: (String) -> Unit,
     onUpdateThemeMode: (String) -> Unit,
+    onUpdateAiProvider: (AiProvider) -> Unit,
+    onUpdateAiModel: (String) -> Unit,
+    onUpdateLanguage: (String) -> Unit,
     onRequestClearAllData: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier

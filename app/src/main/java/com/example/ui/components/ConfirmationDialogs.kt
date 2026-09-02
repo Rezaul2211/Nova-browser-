@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.ShortText
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
@@ -22,7 +24,6 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.ShortText
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,6 +38,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -182,10 +187,23 @@ fun TextSelectionAiSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            SelectionActionRow(icon = Icons.Default.Lightbulb, label = "Explain simply", onClick = { onAction(SelectedTextAction.EXPLAIN) })
-            SelectionActionRow(icon = Icons.Default.Language, label = "Translate to বাংলা", onClick = { onAction(SelectedTextAction.TRANSLATE_BANGLA) })
-            SelectionActionRow(icon = Icons.Default.ShortText, label = "Summarize text", onClick = { onAction(SelectedTextAction.SUMMARIZE) })
-            SelectionActionRow(icon = Icons.Default.Psychology, label = "Rewrite clearly", onClick = { onAction(SelectedTextAction.REWRITE) })
+
+
+            var showRewriteOptions by remember { mutableStateOf(false) }
+            if (!showRewriteOptions) {
+                SelectionActionRow(icon = Icons.AutoMirrored.Filled.Chat, label = "Ask AUREN", onClick = { onAction(SelectedTextAction.ASK) })
+                SelectionActionRow(icon = Icons.Default.Lightbulb, label = "Explain simply", onClick = { onAction(SelectedTextAction.EXPLAIN) })
+                SelectionActionRow(icon = Icons.Default.Language, label = "Translate text", onClick = { onAction(SelectedTextAction.TRANSLATE_BANGLA) })
+                SelectionActionRow(icon = Icons.AutoMirrored.Filled.ShortText, label = "Summarize text", onClick = { onAction(SelectedTextAction.SUMMARIZE) })
+                SelectionActionRow(icon = Icons.Default.Psychology, label = "Rewrite text...", onClick = { showRewriteOptions = true })
+            } else {
+                Text("Select Rewrite Style:", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
+                SelectionActionRow(icon = Icons.Default.AutoAwesome, label = "Simplify", onClick = { onAction(SelectedTextAction.REWRITE_SIMPLIFY) })
+                SelectionActionRow(icon = Icons.Default.AutoAwesome, label = "Shorten", onClick = { onAction(SelectedTextAction.REWRITE_SHORTEN) })
+                SelectionActionRow(icon = Icons.Default.AutoAwesome, label = "Professional", onClick = { onAction(SelectedTextAction.REWRITE_PROFESSIONAL) })
+                SelectionActionRow(icon = Icons.Default.AutoAwesome, label = "Casual", onClick = { onAction(SelectedTextAction.REWRITE_CASUAL) })
+                SelectionActionRow(icon = Icons.Default.AutoAwesome, label = "Academic", onClick = { onAction(SelectedTextAction.REWRITE_ACADEMIC) })
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
         }

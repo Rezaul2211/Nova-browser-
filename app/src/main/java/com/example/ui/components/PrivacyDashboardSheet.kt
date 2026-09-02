@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cookie
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material3.Card
@@ -56,6 +57,7 @@ fun PrivacyDashboardSheet(
     pageStats: PagePrivacyStats,
     cumulativeStats: CumulativePrivacyStats,
     onToggleSiteShield: () -> Unit,
+    onAiScan: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -261,6 +263,34 @@ fun PrivacyDashboardSheet(
             }
 
             // Blocked Requests Log
+            
+            if (pageStats.aiAdDetections.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "AI Ad Detections",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                    )
+                    
+                    pageStats.aiAdDetections.forEach { detection ->
+                        Card(
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        ) {
+                            Row(modifier = Modifier.padding(12.dp)) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = detection,
+                                    style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onErrorContainer)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             if (pageStats.blockedDomains.isNotEmpty()) {
                 item {
                     Text(
@@ -345,6 +375,15 @@ fun PrivacyDashboardSheet(
                             Text("Total Ads Blocked:", style = MaterialTheme.typography.bodySmall)
                             Text("${cumulativeStats.totalAdsBlocked}", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
                         }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Total AI Ads Detected:", style = MaterialTheme.typography.bodySmall)
+                            Text("${cumulativeStats.totalAiAdsBlocked}", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween

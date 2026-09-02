@@ -1,6 +1,6 @@
 {
   "name": "NOVA Browser",
-  "description": "A fast, privacy-first Android web browser with built-in ad/tracker blocking and Gemini AI assistant.",
+  "description": "A fast, privacy-first Android web browser featuring Dual Search (Web + AI Search), built-in ad/tracker blocking, and multi-provider AI synthesis.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

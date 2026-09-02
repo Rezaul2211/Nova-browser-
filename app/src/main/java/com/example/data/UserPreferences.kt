@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.ai.AiProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -28,6 +29,8 @@ data class BrowserSettings(
     val aiConfirmBeforeSend: Boolean = true,
     val aiDefaultLanguage: String = "English",
     val customGeminiApiKey: String = "",
+    val aiProvider: AiProvider = AiProvider.GEMINI,
+    val aiModel: String = "",
     val darkThemeMode: String = "SYSTEM", // LIGHT, DARK, SYSTEM
     val allowedAdSites: Set<String> = emptySet()
 )
@@ -48,6 +51,8 @@ class UserPreferences(private val context: Context) {
     private val KEY_AI_CONFIRM = booleanPreferencesKey("ai_confirm")
     private val KEY_AI_LANGUAGE = stringPreferencesKey("ai_language")
     private val KEY_CUSTOM_GEMINI_KEY = stringPreferencesKey("custom_gemini_key")
+    private val KEY_AI_PROVIDER = stringPreferencesKey("ai_provider")
+    private val KEY_AI_MODEL = stringPreferencesKey("ai_model")
     private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
     private val KEY_ALLOWED_AD_SITES = stringSetPreferencesKey("allowed_ad_sites")
 
@@ -67,6 +72,8 @@ class UserPreferences(private val context: Context) {
             aiConfirmBeforeSend = pref[KEY_AI_CONFIRM] ?: true,
             aiDefaultLanguage = pref[KEY_AI_LANGUAGE] ?: "English",
             customGeminiApiKey = pref[KEY_CUSTOM_GEMINI_KEY] ?: "",
+            aiProvider = AiProvider.fromName(pref[KEY_AI_PROVIDER] ?: AiProvider.GEMINI.name),
+            aiModel = pref[KEY_AI_MODEL] ?: "",
             darkThemeMode = pref[KEY_THEME_MODE] ?: "SYSTEM",
             allowedAdSites = pref[KEY_ALLOWED_AD_SITES] ?: emptySet()
         )
@@ -122,6 +129,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setAiDefaultLanguage(lang: String) {
         context.dataStore.edit { it[KEY_AI_LANGUAGE] = lang }
+    }
+
+    suspend fun setAiProvider(provider: AiProvider) {
+        context.dataStore.edit { it[KEY_AI_PROVIDER] = provider.name }
+    }
+
+    suspend fun setAiModel(model: String) {
+        context.dataStore.edit { it[KEY_AI_MODEL] = model.trim() }
     }
 
     suspend fun setCustomGeminiApiKey(key: String) {

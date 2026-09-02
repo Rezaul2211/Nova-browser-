@@ -12,8 +12,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class GeminiAiService {
-
+class GeminiAiService : AiService {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -25,15 +24,13 @@ class GeminiAiService {
         .build()
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-
-    // Model name strictly aligned with gemini-api skill
     private val MODEL_NAME = "gemini-3.5-flash"
-    private val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 
-    suspend fun generateContent(
+    override suspend fun generateContent(
         prompt: String,
-        customApiKey: String? = null,
-        systemInstruction: String? = null
+        customApiKey: String?,
+        systemInstruction: String?,
+        model: String?
     ): Result<String> = withContext(Dispatchers.IO) {
         val apiKey = when {
             !customApiKey.isNullOrBlank() -> customApiKey
@@ -43,13 +40,13 @@ class GeminiAiService {
 
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             return@withContext Result.failure(
-                IllegalStateException("Gemini API key is not configured. Please enter your API key in NOVA Browser Settings.")
+                IllegalStateException("Gemini API key is not configured. Please enter your API key in Settings.")
             )
         }
 
-        val requestUrl = "$BASE_URL?key=$apiKey"
+        val usedModel = model ?: MODEL_NAME
+        val requestUrl = "https://generativelanguage.googleapis.com/v1beta/models/$usedModel:generateContent?key=$apiKey"
 
-        // Build Gemini REST Payload
         val escapedPrompt = escapeJson(prompt)
         val requestJson = if (systemInstruction != null) {
             val escapedSystem = escapeJson(systemInstruction)

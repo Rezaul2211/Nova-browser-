@@ -200,6 +200,24 @@ class AdBlockEngine {
         )
     }
 
+    
+    fun recordAiAdDetection(tabId: String, pageUrl: String, elementInfo: String): PagePrivacyStats {
+        val current = pageStatsMap[tabId] ?: PagePrivacyStats(pageUrl = pageUrl)
+        val detections = current.aiAdDetections.toMutableList()
+        detections.add(elementInfo)
+        
+        val updated = current.copy(
+            aiAdsBlocked = current.aiAdsBlocked + 1,
+            aiAdDetections = detections
+        )
+        pageStatsMap[tabId] = updated
+        
+        _cumulativeStats.value = _cumulativeStats.value.copy(
+            totalAiAdsBlocked = _cumulativeStats.value.totalAiAdsBlocked + 1
+        )
+        return updated
+    }
+
     fun getPageStats(tabId: String): PagePrivacyStats {
         return pageStatsMap[tabId] ?: PagePrivacyStats()
     }
