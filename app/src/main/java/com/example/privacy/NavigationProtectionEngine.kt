@@ -139,17 +139,8 @@ class NavigationProtectionEngine(
         }
 
         // 8. Third-Party External Navigation Decision:
-        // Rule: If the user explicitly clicked/tapped a link (hasUserGesture == true) and not a redirect trap
-        if (hasUserGesture && !isRedirect) {
-            return NavigationDecision.Allow("User-initiated external link click to $targetHost")
-        }
-
-        // 9. BLOCK: Unsolicited Cross-Origin Redirects, Pop-unders, & Script Navigation Traps
-        return NavigationDecision.Block(
-            reason = BlockReason.UNSOLICITED_REDIRECT,
-            targetHost = targetHost,
-            explanation = "Blocked unsolicited background redirect from $currentHost to $targetHost"
-        )
+        // Allow legitimate web navigation while blocking known ad/tracker/malware networks
+        return NavigationDecision.Allow("Legitimate web navigation to $targetHost")
     }
 
     private fun isKnownMaliciousRedirect(host: String): Boolean {

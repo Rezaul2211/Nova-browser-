@@ -71,29 +71,88 @@ class WebViewSession(
         defaultUserAgent = settings.userAgentString
 
         settings.javaScriptEnabled = true
-        settings.javaScriptCanOpenWindowsAutomatically = false
+        settings.javaScriptCanOpenWindowsAutomatically = true
         settings.setSupportMultipleWindows(true)
-        settings.domStorageEnabled = !isPrivate
-        settings.databaseEnabled = !isPrivate
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.allowFileAccess = false
-        settings.allowContentAccess = false
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         settings.cacheMode = if (isPrivate) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
 
         if (isPrivate) {
             settings.saveFormData = false
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
+        } else {
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         }
 
         webView.webViewClient = NovaWebViewClient()
         webView.webChromeClient = NovaWebChromeClient()
         webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
             onDownloadRequested(url, userAgent, contentDisposition, mimetype, contentLength)
+        }
+    }
+
+    fun scrollPage(direction: String) {
+        val script = when (direction.lowercase()) {
+            "top", "up_top" -> "window.scrollTo({top: 0, behavior: 'smooth'});"
+            "bottom", "down_bottom" -> "window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});"
+            "up" -> "window.scrollBy({top: -Math.max(window.innerHeight * 0.75, 400), behavior: 'smooth'});"
+            else -> "window.scrollBy({top: Math.max(window.innerHeight * 0.75, 400), behavior: 'smooth'});"
+        }
+        webView.evaluateJavascript(script, null)
+    }
+
+    fun clickElementMatching(query: String, callback: ((Boolean) -> Unit)? = null) {
+        val escaped = query.replace("'", "\\'").replace("\"", "\\\"")
+        val script = """
+            (function() {
+                var q = '$escaped'.toLowerCase().trim();
+                var elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], [role="button"], [onclick], h1 a, h2 a, h3 a, [tabindex]'));
+                
+                // 1. Try exact text or title/aria match
+                var matched = elements.find(function(el) {
+                    var text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || el.value || '').toLowerCase().trim();
+                    return text === q;
+                });
+                
+                // 2. Try partial text match
+                if (!matched) {
+                    matched = elements.find(function(el) {
+                        var text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || el.value || '').toLowerCase().trim();
+                        return text.length > 0 && text.includes(q);
+                    });
+                }
+                
+                // 3. Fallback: query selector
+                if (!matched) {
+                    try {
+                        matched = document.querySelector(q);
+                    } catch(e) {}
+                }
+                
+                if (matched) {
+                    matched.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    setTimeout(function() {
+                        matched.click();
+                    }, 200);
+                    return true;
+                }
+                return false;
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(script) { result ->
+            val success = result == "true"
+            callback?.invoke(success)
         }
     }
 

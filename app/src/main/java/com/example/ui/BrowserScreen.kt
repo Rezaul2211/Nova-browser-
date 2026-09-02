@@ -1,14 +1,20 @@
 package com.example.ui
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -74,7 +80,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.example.R
+import androidx.core.content.ContextCompat
 import com.example.data.SearchMode
 import com.example.ui.components.AddressBar
 import com.example.ui.components.AiAssistantSheet
@@ -84,6 +90,8 @@ import com.example.ui.components.BookmarksHistorySheet
 import com.example.ui.components.ClearDataDialog
 import com.example.ui.components.DownloadsSheet
 import com.example.ui.components.DualSearchTabBar
+import com.example.ui.components.GeminiLiveAiButton
+import com.example.ui.components.GeminiLiveFloatingBar
 import com.example.ui.components.NewTabPage
 import com.example.ui.components.PrivacyDashboardSheet
 import com.example.ui.components.SettingsSheet
@@ -110,6 +118,15 @@ fun BrowserScreen(
     val aiMessages by viewModel.aiChatMessages.collectAsState()
     val aiLoading by viewModel.aiLoading.collectAsState()
     val aiError by viewModel.aiError.collectAsState()
+    val jarvisUiState by viewModel.jarvisVoiceEngine.uiState.collectAsState()
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.toggleJarvisLiveMode()
+        }
+    }
 
     // Dual Search States
     val currentSearchQuery by viewModel.currentSearchQuery.collectAsState()
@@ -170,106 +187,136 @@ fun BrowserScreen(
             }
         },
         bottomBar = {
-            Surface(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding(),
-                color = if (isHomeVisible) Color(0xFFFBFBFA) else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                border = BorderStroke(0.5.dp, if (isHomeVisible) Color(0xFFE8E6DF) else Color.White.copy(alpha = 0.08f)),
-                tonalElevation = 4.dp,
-                shadowElevation = 6.dp
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp)
-                        .padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // 1. Sleek Floating Gemini Live Wave Bar (Non-intrusive, zero website obstruction)
+                AnimatedVisibility(
+                    visible = jarvisUiState.isLiveModeActive,
+                    enter = fadeIn() + slideInVertically { it / 2 },
+                    exit = fadeOut() + slideOutVertically { it / 2 }
                 ) {
-                    // 1. Back
-                    IconButton(
-                        onClick = { viewModel.goBack() },
-                        enabled = activeTab?.canGoBack == true,
-                        modifier = Modifier.testTag("nav_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = if (activeTab?.canGoBack == true) {
-                                if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
-                            } else {
-                                (if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.35f)
-                            }
-                        )
-                    }
-
-                    // 2. Forward
-                    IconButton(
-                        onClick = { viewModel.goForward() },
-                        enabled = activeTab?.canGoForward == true,
-                        modifier = Modifier.testTag("nav_forward_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Forward",
-                            tint = if (activeTab?.canGoForward == true) {
-                                if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
-                            } else {
-                                (if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.35f)
-                            }
-                        )
-                    }
-
-                    // 3. Center Elevated AI Assistant Button (Auren Metallic Logo)
-                    Surface(
-                        onClick = {
-                            viewModel.requestAiAction {
-                                viewModel.openSheet(ActiveSheet.AiAssistant)
-                            }
+                    GeminiLiveFloatingBar(
+                        uiState = jarvisUiState,
+                        onToggleLang = {
+                            val nextLang = if (jarvisUiState.preferredLanguage.startsWith("bn")) "en-US" else "bn-BD"
+                            viewModel.jarvisVoiceEngine.setLanguage(nextLang)
                         },
-                        shape = CircleShape,
-                        color = if (isHomeVisible) Color(0xFFF7F6F2) else MaterialTheme.colorScheme.surfaceVariant,
-                        border = BorderStroke(1.dp, if (isHomeVisible) Color(0xFFD6D1C6) else MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
-                        shadowElevation = 3.dp,
+                        onClose = {
+                            viewModel.jarvisVoiceEngine.stopLiveMode()
+                        }
+                    )
+                }
+
+                // 2. Primary Navigation Bar
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = if (isHomeVisible) Color(0xFFFBFBFA) else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = BorderStroke(0.5.dp, if (isHomeVisible) Color(0xFFE8E6DF) else Color.White.copy(alpha = 0.08f)),
+                    tonalElevation = 4.dp,
+                    shadowElevation = 6.dp
+                ) {
+                    Row(
                         modifier = Modifier
-                            .size(44.dp)
-                            .testTag("nav_ai_button")
+                            .fillMaxWidth()
+                            .height(58.dp)
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_auren_logo_1788383105052),
-                                contentDescription = "AUREN AI",
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
-                    }
-
-                    // 4. Tabs Switcher Button [ 1 ]
-                    IconButton(
-                        onClick = { viewModel.openSheet(ActiveSheet.Tabs) },
-                        modifier = Modifier.testTag("nav_tabs_button")
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .border(
-                                    width = 1.6.dp,
-                                    color = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface,
-                                    shape = RoundedCornerShape(6.dp)
-                                ),
-                            contentAlignment = Alignment.Center
+                        // 1. Back
+                        IconButton(
+                            onClick = { viewModel.goBack() },
+                            enabled = activeTab?.canGoBack == true,
+                            modifier = Modifier.testTag("nav_back_button")
                         ) {
-                            Text(
-                                text = "${tabs.size}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = if (activeTab?.canGoBack == true) {
+                                    if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    (if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.35f)
+                                }
                             )
                         }
-                    }
 
-                    // 5. More Menu (...)
+                        // 2. Forward
+                        IconButton(
+                            onClick = { viewModel.goForward() },
+                            enabled = activeTab?.canGoForward == true,
+                            modifier = Modifier.testTag("nav_forward_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Forward",
+                                tint = if (activeTab?.canGoForward == true) {
+                                    if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    (if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.35f)
+                                }
+                            )
+                        }
+
+                        // 3. Center Elevated AI Assistant / Gemini Live Button (Live Wave Aura)
+                        GeminiLiveAiButton(
+                            isLiveMode = jarvisUiState.isLiveModeActive,
+                            isHomeVisible = isHomeVisible,
+                            soundLevel = jarvisUiState.soundLevel,
+                            isSpeaking = jarvisUiState.isTtsSpeaking,
+                            onClick = {
+                                if (jarvisUiState.isLiveModeActive) {
+                                    if (jarvisUiState.isTtsSpeaking) {
+                                        viewModel.jarvisVoiceEngine.stopSpeaking()
+                                    } else {
+                                        viewModel.jarvisVoiceEngine.stopListening()
+                                    }
+                                } else {
+                                    viewModel.openAiAssistant()
+                                }
+                            },
+                            onLongClick = {
+                                val hasMicPermission = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasMicPermission) {
+                                    viewModel.toggleJarvisLiveMode()
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            modifier = Modifier.testTag("nav_ai_button")
+                        )
+
+                        // 4. Tabs Switcher Button [ 1 ]
+                        IconButton(
+                            onClick = { viewModel.openSheet(ActiveSheet.Tabs) },
+                            modifier = Modifier.testTag("nav_tabs_button")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .border(
+                                        width = 1.6.dp,
+                                        color = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface,
+                                        shape = RoundedCornerShape(6.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${tabs.size}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isHomeVisible) Color(0xFF2C2B29) else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        // 5. More Menu (...)
                     Box {
                         IconButton(
                             onClick = { moreMenuExpanded = true },
@@ -372,7 +419,8 @@ fun BrowserScreen(
                 }
             }
         }
-    ) { innerPadding ->
+    }
+) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()

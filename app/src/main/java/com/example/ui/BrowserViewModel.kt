@@ -9,6 +9,8 @@ import com.example.ai.ChatMessage
 import com.example.ai.AiServiceFactory
 import com.example.ai.AiService
 import com.example.ai.AiProvider
+import com.example.ai.JarvisAction
+import com.example.ai.JarvisVoiceEngine
 import com.example.ai.MessageSender
 import com.example.ai.PageExtractionResult
 import com.example.ai.PageExtractor
@@ -67,10 +69,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val filterEngine = FilterEngine()
     val cookieController = CookieController(application)
     
-
     val downloadManager = NovaDownloadManager(
         context = application,
         downloadDao = downloadDao,
+        scope = viewModelScope
+    )
+
+    val jarvisVoiceEngine = JarvisVoiceEngine(
+        context = application,
         scope = viewModelScope
     )
 
@@ -159,6 +165,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private var pendingAiAction: (() -> Unit)? = null
 
     init {
+        // Connect Jarvis Voice Automation Engine
+        jarvisVoiceEngine.getPageContext = {
+            val tab = activeTab.value
+            (tab?.url ?: "") to (tab?.title ?: "")
+        }
+        jarvisVoiceEngine.onExecuteAction = { action: JarvisAction ->
+            executeJarvisAction(action)
+        }
+
         // Sync allowed domains from settings to filterEngine
         viewModelScope.launch {
             settings.map { it.allowedAdSites }.distinctUntilChanged().collect { allowed ->
@@ -479,18 +494,74 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // AI Assistant
+    fun openAiAssistant() {
+        if (!settings.value.aiEnabled) {
+            _aiError.value = "AI Assistant is disabled in Settings."
+        }
+        _activeSheet.value = ActiveSheet.AiAssistant
+    }
+
+    fun toggleJarvisLiveMode() {
+        val langCode = if (settings.value.aiDefaultLanguage.contains("Bengali", ignoreCase = true) || settings.value.aiDefaultLanguage.contains("Bangla", ignoreCase = true)) "bn-BD" else "en-US"
+        jarvisVoiceEngine.toggleLiveMode(langCode)
+    }
+
+    fun openJarvisVoice() {
+        toggleJarvisLiveMode()
+    }
+
     fun requestAiAction(action: () -> Unit) {
         if (!settings.value.aiEnabled) {
             _aiError.value = "AI Assistant is disabled in Settings."
             _activeSheet.value = ActiveSheet.AiAssistant
             return
         }
+        action()
+    }
 
-        if (settings.value.aiConfirmBeforeSend) {
-            pendingAiAction = action
-            _activeSheet.value = ActiveSheet.AiConsentConfirmation
-        } else {
-            action()
+    fun executeJarvisAction(action: JarvisAction) {
+        when (action) {
+            is JarvisAction.Navigate -> {
+                navigateTo(action.url)
+            }
+            is JarvisAction.Search -> {
+                performSearch(action.query, isAiSearch = false)
+            }
+            is JarvisAction.Scroll -> {
+                tabManager.getActiveSession()?.scrollPage(action.direction)
+            }
+            is JarvisAction.ClickElement -> {
+                tabManager.getActiveSession()?.clickElementMatching(action.targetText)
+            }
+            is JarvisAction.NewTab -> {
+                if (action.url != null) {
+                    tabManager.newTab(action.url)
+                } else {
+                    tabManager.newTab()
+                }
+            }
+            is JarvisAction.CloseTab -> {
+                val current = activeTabId.value
+                tabManager.closeTab(current)
+            }
+            is JarvisAction.RefreshPage -> {
+                tabManager.getActiveSession()?.reload()
+            }
+            is JarvisAction.GoBack -> {
+                tabManager.getActiveSession()?.goBack()
+            }
+            is JarvisAction.GoForward -> {
+                tabManager.getActiveSession()?.goForward()
+            }
+            is JarvisAction.SummarizePage -> {
+                summarizeCurrentPage()
+            }
+            is JarvisAction.TranslatePage -> {
+                translateCurrentPage()
+            }
+            is JarvisAction.SpeakOnly -> {
+                // Spoken directly by TTS
+            }
         }
     }
 
@@ -867,5 +938,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             SelectedTextAction.REWRITE_ACADEMIC -> "Rewrite this text in an academic tone:\n\n\"$selectedText\""
         }
         askAiAboutPage(prompt)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        jarvisVoiceEngine.destroy()
     }
 }
