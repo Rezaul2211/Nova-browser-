@@ -9,7 +9,7 @@ import android.net.Uri
 class VideoAdRuleManager {
 
     // 1. Dedicated Video Ad Serving & Header Bidding Hosts
-    val videoAdHosts: MutableSet<String> = hashSetOf(
+    val videoAdHosts: Set<String> = setOf(
         "imasdk.googleapis.com",
         "pubads.g.doubleclick.net",
         "securepubads.g.doubleclick.net",

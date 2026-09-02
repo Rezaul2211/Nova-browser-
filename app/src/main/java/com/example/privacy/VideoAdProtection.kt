@@ -45,56 +45,8 @@ object VideoAdProtection {
                     );
                 };
 
-                // Patch window.fetch
-                if (window.fetch) {
-                    var origFetch = window.fetch;
-                    window.fetch = function(resource, init) {
-                        var url = (typeof resource === 'string') ? resource : (resource && resource.url ? resource.url : '');
-                        if (isAdUrl(url)) {
-                            var isVmap = url.indexOf('vmap') !== -1;
-                            var isJson = url.indexOf('.json') !== -1 || (init && init.headers && JSON.stringify(init.headers).indexOf('json') !== -1);
-                            var body = isVmap 
-                                ? '<vmap:VMAP xmlns:vmap="http://www.iab.net/videosuite/vmap" version="1.0"></vmap:VMAP>'
-                                : (isJson ? '{"ads":[],"adPlacements":[],"status":"ok"}' : '<VAST version="4.2"></VAST>');
-                            var contentType = isJson ? 'application/json' : 'application/xml';
-                            return Promise.resolve(new Response(body, {
-                                status: 200,
-                                statusText: 'OK',
-                                headers: { 'Content-Type': contentType }
-                            }));
-                        }
-                        return origFetch.apply(this, arguments);
-                    };
-                }
-
-                // Patch XMLHttpRequest
-                if (window.XMLHttpRequest) {
-                    var origOpen = XMLHttpRequest.prototype.open;
-                    var origSend = XMLHttpRequest.prototype.send;
-                    XMLHttpRequest.prototype.open = function(method, url) {
-                        this.__nova_url = url;
-                        return origOpen.apply(this, arguments);
-                    };
-                    XMLHttpRequest.prototype.send = function(data) {
-                        var url = this.__nova_url || '';
-                        if (isAdUrl(url)) {
-                            var isVmap = url.indexOf('vmap') !== -1;
-                            var isJson = url.indexOf('.json') !== -1;
-                            var responseText = isVmap 
-                                ? '<vmap:VMAP xmlns:vmap="http://www.iab.net/videosuite/vmap" version="1.0"></vmap:VMAP>'
-                                : (isJson ? '{"ads":[],"adPlacements":[],"status":"ok"}' : '<VAST version="4.2"></VAST>');
-                            Object.defineProperty(this, 'readyState', { value: 4, writable: false });
-                            Object.defineProperty(this, 'status', { value: 200, writable: false });
-                            Object.defineProperty(this, 'statusText', { value: 'OK', writable: false });
-                            Object.defineProperty(this, 'responseText', { value: responseText, writable: false });
-                            Object.defineProperty(this, 'response', { value: responseText, writable: false });
-                            if (typeof this.onreadystatechange === 'function') this.onreadystatechange();
-                            if (typeof this.onload === 'function') this.onload();
-                            return;
-                        }
-                        return origSend.apply(this, arguments);
-                    };
-                }
+                // Native shouldInterceptRequest handles fetch and XHR interception.
+                // We only need to handle inline config objects and DOM modifications here.
 
                 // =========================================================================
                 // 2. YOUTUBE PLAYER RESPONSE SANITIZATION
